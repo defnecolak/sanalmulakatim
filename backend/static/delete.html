@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Veri Silme</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <!-- Optional CAPTCHA (Cloudflare Turnstile). Rendered only when enabled via /api/public_config -->
+    <script src="/static/public_config.js" defer></script>
+    <script src="/static/delete.js" defer></script>
+  </head>
+  <body>
+    <div class="top">
+      <div class="wrap">
+        <div class="brand">
+          <h1>Veri Silme</h1>
+          <div class="tagline">E-posta ile ilişkilendirilmiş verileri silmek için onay bağlantısı al.</div>
+        </div>
+        <div class="badge" id="cfgBadge">Yükleniyor…</div>
+      </div>
+    </div>
+
+    <div class="wrap">
+      <div class="card">
+        <h2>Silme isteği</h2>
+
+        <div id="requestBox">
+          <p class="help">
+            E-posta adresini gir. Bu adrese <b>tek kullanımlık</b> bir onay bağlantısı göndeririz.
+            Bağlantıya tıklayıp onayladıktan sonra e-posta ile ilişkilendirilmiş veriler (kurtarma linkleri,
+            e-posta↔anahtar eşleşmesi, ödeme kaydındaki e-posta bilgisi) kaldırılır.
+            <b>Pro anahtarın kendisi silinmez</b>; sadece e-posta bağı kopar.
+          </p>
+
+          <div class="row">
+            <div>
+              <label for="email">E-posta</label>
+              <input id="email" type="email" placeholder="ornek@domain.com" autocomplete="email" />
+            </div>
+          </div>
+
+          <div class="row" id="captchaRow" style="display:none">
+            <div>
+              <label>Doğrulama</label>
+              <div id="captchaWidget"></div>
+              <div class="help">Bu kontrol bot/istismar girişimlerini azaltır.</div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="btn" id="btnRequest">Onay Linki Gönder</button>
+            <a class="btn btn-ghost" href="/privacy">Gizlilik</a>
+          </div>
+        </div>
+
+        <div id="confirmBox" class="hidden">
+          <p class="help">
+            Onay bağlantısı doğrulandı. Devam edersen bu e-postaya bağlı veriler silinecek / anonimleştirilecek.
+          </p>
+          <div class="actions">
+            <button class="btn" id="btnConfirm">Silme İşlemini Onayla</button>
+            <a class="btn btn-ghost" href="/delete">Vazgeç</a>
+          </div>
+        </div>
+
+        <div id="msg" class="alert hidden"></div>
+      </div>
+
+      <div class="footer">
+        <a href="/">Ana Sayfa</a> • <a href="/app">Uygulama</a> • <a href="/recover">Pro Kurtarma</a>
+      </div>
+    </div>
+  </body>
+</html>

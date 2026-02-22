@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pro Anahtar Kurtarma</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <!-- Optional CAPTCHA (Cloudflare Turnstile). Rendered only when enabled via /api/public_config -->
+    <script src="/static/public_config.js" defer></script>
+    <script src="/static/recover.js" defer></script>
+  </head>
+  <body>
+    <div class="top">
+      <div class="wrap">
+        <div class="brand">
+          <h1>Pro Anahtar Kurtarma</h1>
+          <div class="tagline">E-posta ile tek kullanımlık kurtarma linki gönder.</div>
+        </div>
+        <div class="badge" id="cfgBadge">Yükleniyor…</div>
+      </div>
+    </div>
+
+    <div class="wrap">
+      <div class="card">
+        <h2>1) Link gönder</h2>
+        <p class="help">
+          Pro anahtarını daha önce bu e-postaya <b>gönderdiysen</b>, burada kurtarabilirsin.
+          Sistem, e-postana <b>tek kullanımlık</b> ve <b>süreli</b> bir link yollar.
+        </p>
+
+        <div class="row">
+          <div>
+            <label for="email">E-posta</label>
+            <input id="email" type="email" placeholder="ornek@domain.com" />
+          </div>
+        </div>
+
+        <div class="row" id="captchaRow" style="display:none">
+          <div>
+            <label>Doğrulama</label>
+            <div id="captchaWidget"></div>
+            <p class="help">Bot/istismar trafiğini azaltmak için doğrulama kullanıyoruz.</p>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn" id="btnSend">Link Gönder</button>
+          <a class="btn btn-ghost" href="/app">Uygulamaya dön</a>
+        </div>
+
+        <div id="msg" class="alert hidden"></div>
+      </div>
+
+      <div class="card hidden" id="cardTokens">
+        <h2>2) Pro anahtarların</h2>
+        <p class="help">Link doğrulandı. Aşağıdaki anahtarları kopyalayıp /app sayfasındaki <b>Pro Anahtarı</b> alanına yapıştırabilirsin.</p>
+
+        <div id="tokens"></div>
+
+        <div class="actions">
+          <a class="btn" href="/app">Uygulamaya Git</a>
+          <a class="btn btn-ghost" href="/">Ana sayfa</a>
+        </div>
+      </div>
+
+      <div class="footer">
+        <a href="/">Ana Sayfa</a> • <a href="/privacy">Gizlilik</a> • <a href="/terms">Şartlar</a> • <a href="/refund">İade</a> • <a href="/contact">İletişim</a> • <a href="/delete">Veri Silme</a>
+      </div>
+    </div>
+  </body>
+</html>

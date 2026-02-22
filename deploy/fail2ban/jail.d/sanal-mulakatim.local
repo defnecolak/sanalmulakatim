@@ -1,0 +1,13 @@
+[sanal-mulakatim]
+enabled = true
+filter = sanal-mulakatim
+logpath = /var/log/caddy/access.log
+
+# 5 dakika içinde 30 kere 401/403/429 üretirse 1 saat banla.
+findtime = 300
+maxretry = 30
+bantime = 3600
+
+# Debian/Ubuntu örneği.
+# Sistemin firewall altyapısına göre (iptables/nftables/ufw) action değişebilir.
+action = iptables-multiport[name=sanal-mulakatim, port="80,443"]

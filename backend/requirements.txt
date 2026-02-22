@@ -1,0 +1,17 @@
+fastapi>=0.110
+uvicorn[standard]>=0.24
+python-multipart>=0.0.7
+python-dotenv>=1.0.0
+openai>=1.0.0
+pypdf>=4.0.0
+pymupdf>=1.24.0
+Pillow>=10.0.0
+requests>=2.31.0
+pyotp>=2.9.0
+
+# Optional (for payments / error tracking)
+stripe>=9.0.0
+sentry-sdk[fastapi]>=2.0.0
+
+# Optional DB: Postgres (recommended for blue/green + multi-instance prod)
+psycopg[binary]>=3.2.0

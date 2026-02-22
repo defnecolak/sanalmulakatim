@@ -1,0 +1,13 @@
+[sshd]
+enabled = true
+port = ssh
+backend = systemd
+
+# 10 dakika içinde 4 deneme -> 1 saat ban
+findtime = 10m
+maxretry = 4
+bantime = 1h
+
+# Ban gerekirse e-mail bildirimi ekleyebilirsin (opsiyonel)
+# action = %(action_mwl)s
+# destemail = semi.ozgen@sanalmulakatim.com

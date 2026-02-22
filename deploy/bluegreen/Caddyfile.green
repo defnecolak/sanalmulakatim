@@ -1,0 +1,60 @@
+{
+    email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+    encode gzip
+
+    request_body {
+        max_size 20MB
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+
+    header {
+        -Server
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+    }
+
+    @badmethods method TRACE TRACK CONNECT
+    handle @badmethods {
+        respond 405
+    }
+
+    @badpaths path /wp-admin* /wp-login.php /xmlrpc.php /phpmyadmin* /phpMyAdmin* /cgi-bin* /.env /actuator* /jenkins* /server-status /.git* /.svn* /.hg*
+    handle @badpaths {
+        respond 403
+    }
+
+    @sourcemaps path *.map
+    handle @sourcemaps {
+        respond 404
+    }
+
+    @apidocs path /docs* /redoc* /openapi.json
+    handle @apidocs {
+        respond 404
+    }
+
+    @admin path /admin/* /api/admin/*
+    handle @admin {
+        @allowed remote_ip {$ADMIN_ALLOW_IPS}
+        handle @allowed {
+            basicauth {
+                {$ADMIN_BASIC_USER} {$ADMIN_BASIC_PASS_HASH}
+            }
+            reverse_proxy app_green:5555 {
+                header_up X-Admin-Edge-Token {$ADMIN_EDGE_TOKEN}
+            }
+        }
+        respond "Not Found" 404
+    }
+
+    reverse_proxy app_green:5555
+}

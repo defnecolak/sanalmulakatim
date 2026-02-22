@@ -1,0 +1,11 @@
+[Unit]
+Description=Sanal Mülakatım - Daily Backup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/sanal-mulakatim/interview-sim-lite-launch
+Environment=BACKUP_RETENTION_DAYS=30
+ExecStart=/opt/sanal-mulakatim/interview-sim-lite-launch/deploy/backup.sh
+ExecStartPost=/opt/sanal-mulakatim/interview-sim-lite-launch/deploy/backup_retention.sh

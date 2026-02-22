@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+
+<html lang="tr">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+    <title>Sanal Mülakatım</title>
+<link href="/static/style.css" rel="stylesheet"/>
+</head>
+<body>
+<header class="top">
+<div class="wrap">
+<div class="brand">
+      <h1>Sanal Mülakatım</h1>
+<div class="tagline">Tek soru akışı • CV ile kişiselleştirme • Ses → Yazı</div>
+</div>
+<div class="row"><div class="badge2" id="usageBadge"><span class="muted">Paket:</span> —</div>
+<button class="btn btn-primary btn-small" id="upgradeBtn" title="Pro\'ya geç ve limitleri kaldır">Pro\'ya Geç</button>
+<div class="badge2 clickable" id="keyBadge" title="Pro anahtarını yönet">Anahtar: —</div>
+</div>
+</div>
+</header>
+<main class="wrap">
+<div class="alert hidden" id="globalAlert"></div>
+<section class="card">
+<h2>1) Ayarlar</h2>
+<div class="grid2">
+<div class="field">
+<label for="role">Meslek</label>
+<input id="role" placeholder="Doktor, Sekreter, Siber Güvenlik Uzmanı" type="text" value="doktor"/>
+</div>
+<div class="field">
+<label for="seniority">Kıdem</label>
+<select id="seniority">
+<option value="Yeni Mezun">Yeni Mezun (0–1 yıl)</option>
+<option selected="" value="Orta Seviye">Orta Seviye (1–4 yıl)</option>
+<option value="Kıdemli">Kıdemli (5+ yıl)</option>
+</select>
+</div>
+<div class="field">
+<label for="language">Dil</label>
+<select id="language">
+<option selected="" value="Türkçe">Türkçe</option>
+<option value="English">English</option>
+</select>
+</div>
+<div class="field">
+<label for="nQuestions">Soru Sayısı (1–10)</label>
+<input id="nQuestions" max="10" min="1" type="number" value="3"/>
+</div>
+</div>
+<div class="divider"></div>
+<div class="field">
+<label for="pdfFile">CV PDF Yükle (opsiyonel)</label>
+<input accept="application/pdf" id="pdfFile" type="file"/>
+<div class="hint">PDF seçince otomatik okunur. (Taranmış PDF ise OCR denenir.)</div>
+<div class="mini hidden" id="pdfStatus"></div>
+</div>
+<div class="field">
+<label for="cvText">CV Metni (opsiyonel)</label>
+<textarea id="cvText" placeholder="İstersen CV'ni buraya yapıştırabilirsin. PDF yüklediğinde otomatik dolar." rows="8"></textarea>
+<div class="hint">
+          CV metni, soruları ve geri bildirimi <b>senin deneyimlerine göre</b> kişiselleştirir.
+          Meslek her zaman önceliklidir.
+        </div>
+</div>
+<div class="field">
+<label for="proToken">Pro Anahtarı (opsiyonel)</label>
+<input id="proToken" placeholder="Pro anahtarını buraya gir (varsa)" type="password"/>
+<div class="hint small">
+          Pro anahtarı girersen günlük limitler kalkar. Pro almak için <a href="/#pricing">fiyatlandırmaya</a> bak.
+        </div>
+</div>
+<div class="row">
+<button class="primary" id="startBtn">Mülakatı Başlat</button>
+<div class="mini hidden" id="startStatus"></div>
+</div>
+</section>
+<section class="card hidden" id="interviewCard">
+<h2>2) Mülakat Akışı</h2>
+<div class="progressRow">
+<div class="muted" id="progressText">İlerleme: 0/0</div>
+<div class="muted" id="progressPct">0%</div>
+</div>
+<div class="progressBar"><div class="progressFill" id="progressFill" style="width:0%"></div></div>
+<div class="qbox" id="qBox">
+<div class="chips">
+<span class="chip" id="chipIndex">Soru 1/1</span>
+<span class="chip chip-soft" id="chipType">—</span>
+<span class="chip chip-warn" id="chipStatus">bekliyor</span>
+</div>
+<div class="qtext" id="questionText">—</div>
+<div class="followups hidden" id="followupsBox">
+<div class="muted small">Takip soruları</div>
+<ul id="followupsList"></ul>
+</div>
+</div>
+<div class="field">
+<label for="answer">Cevabın</label>
+<textarea id="answer" placeholder="Cevabını yaz veya ses kaydıyla doldur." rows="6"></textarea>
+</div>
+<div class="row">
+<button class="ghost" id="btnStar">STAR İskeleti</button>
+<button class="ghost" id="btnClear">Temizle</button>
+<button class="ghost" id="btnMetric">Metrik Ekle</button>
+</div>
+<div class="audioCard">
+<div class="audioTop">
+<div class="field grow">
+<label for="micSelect">Mikrofon</label>
+<div class="row">
+<select class="grow" id="micSelect"></select>
+<button class="ghost" id="micRefresh">Yenile</button>
+</div>
+</div>
+</div>
+<div class="meterRow">
+<div class="meter"><div class="meterFill" id="meterFill" style="width:0%"></div></div>
+<div class="muted small" id="meterPct">0%</div>
+</div>
+<div class="row">
+<button class="primary" id="recStart">Kaydı Başlat</button>
+<button class="ghost" disabled="" id="recStop">Durdur</button>
+</div>
+<div class="mini hidden" id="transcribeStatus"></div>
+<audio class="hidden" controls="" id="audioPlayback"></audio>
+<div class="hint small">Durdur'a basınca cevap otomatik yazıya çevrilir.</div>
+</div>
+<div class="row">
+<button class="primary" id="evalBtn">Cevabı Gönder + Değerlendir</button>
+<button class="ghost" disabled="" id="okNextBtn">OK → Sonraki Soru</button>
+</div>
+<div class="feedback hidden" id="feedbackBox">
+<div class="loading hidden" id="feedbackLoading">
+<div class="spinner"></div>
+<div>
+<div class="loadingTitle">Değerlendiriliyor…</div>
+<div class="muted small">Geri bildirim hazırlanıyor.</div>
+</div>
+</div>
+<div id="feedbackContent"></div>
+</div>
+<div class="hint small">
+        Eğitim amaçlıdır; gerçek klinik karar yerine geçmez.
+      </div>
+</section>
+<footer class="footer muted small">
+      Lite sürüm: Dashboard / Paketler / Recruiter yok. • <a href="/">Ana Sayfa</a> • <a href="/privacy">Gizlilik</a> • <a href="/terms">Şartlar</a> • <a href="/refund">İade</a> • <a href="/contact">İletişim</a> • <a href="/recover">Pro Kurtarma</a> • <a href="/delete">Veri Silme</a>
+</footer>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

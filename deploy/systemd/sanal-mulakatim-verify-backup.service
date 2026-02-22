@@ -1,0 +1,9 @@
+[Unit]
+Description=Sanal Mülakatım - Weekly Backup Verify
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/sanal-mulakatim/interview-sim-lite-launch
+ExecStart=/bin/bash -lc '/opt/sanal-mulakatim/interview-sim-lite-launch/deploy/runbook/verify_latest_backup.sh'

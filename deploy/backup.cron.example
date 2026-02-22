@@ -1,0 +1,5 @@
+# Example cron entry (runs every day at 03:15)
+# 1) edit: crontab -e
+# 2) add:
+#
+# 15 3 * * * cd /home/ubuntu/interview-sim/interview-sim-lite-launch && ./deploy/backup.sh >> ./deploy/backups/cron.log 2>&1

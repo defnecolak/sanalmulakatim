@@ -1,0 +1,24 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /positions/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: caddy_access
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: caddy
+          __path__: /var/log/caddy/access.log
+
+  - job_name: app_log
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: app
+          __path__: /var/log/app/app.log

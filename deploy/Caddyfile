@@ -1,0 +1,63 @@
+{
+    # Optional: set an email for ACME (Let's Encrypt) notifications
+    email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+    encode gzip
+
+    # Defense-in-depth: cap body size at the edge (backend also validates per-endpoint)
+    request_body {
+        max_size 20MB
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+
+    # Minimal hardening headers. (Backend also sets strict headers for dynamic responses.)
+    header {
+        -Server
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+    }
+
+    # Block common scanner paths early (optional but reduces noise / load)
+    @badpaths path /wp-admin* /wp-login.php /xmlrpc.php /phpmyadmin* /phpMyAdmin* /cgi-bin* /.env /actuator* /jenkins* /server-status
+    handle @badpaths {
+        respond 403
+    }
+
+    # Block source maps in production (avoid leaking source paths)
+    @sourcemaps path *.map
+    handle @sourcemaps {
+        respond 404
+    }
+
+    # Hide API docs endpoints at the edge (even if backend misconfigured)
+    @apidocs path /docs* /redoc* /openapi.json
+    handle @apidocs {
+        respond 404
+    }
+
+    # Admin security panel: hidden from the internet via IP allowlist + Basic Auth.
+    # If not allowlisted, it 404s (doesn't reveal it exists).
+    @admin path /admin/* /api/admin/*
+    handle @admin {
+        @allowed remote_ip {$ADMIN_ALLOW_IPS}
+        handle @allowed {
+            basicauth {
+                {$ADMIN_BASIC_USER} {$ADMIN_BASIC_PASS_HASH}
+            }
+            reverse_proxy app:5555 {
+                header_up X-Admin-Edge-Token {$ADMIN_EDGE_TOKEN}
+            }
+        }
+        respond "Not Found" 404
+    }
+
+    reverse_proxy app:5555
+}

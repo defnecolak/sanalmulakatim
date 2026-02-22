@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sanal Mülakatım • Güvenlik Paneli</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: stretch; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px 14px; }
+    .card h3 { margin: 0 0 6px 0; font-size: 14px; }
+    .muted { color: #6b7280; font-size: 12px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .toolbar input { width: 280px; max-width: 100%; }
+    .pill { display: inline-flex; align-items: center; gap: 8px; border: 1px solid #e5e7eb; border-radius: 999px; padding: 6px 10px; background: #f9fafb; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; }
+    @media (max-width: 820px) { .grid2 { grid-template-columns: 1fr; } }
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #e5e7eb; padding: 10px 8px; text-align: left; vertical-align: top; }
+    th { font-size: 12px; color: #374151; background: #f9fafb; position: sticky; top: 0; z-index: 2; }
+    td { font-size: 13px; }
+    .tag { display:inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid #e5e7eb; background: #f9fafb; }
+    .err { color: #b91c1c; }
+    .ok { color: #065f46; }
+    .small { font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Güvenlik Paneli</h1>
+    <p class="muted">Bu panel sadece admin anahtarıyla çalışır. IP saklanmaz; sadece hash (ban_key/client_id) tutulur.</p>
+
+    <div class="card" style="margin: 12px 0 18px 0;">
+      <div class="toolbar">
+        <span class="pill">
+          <strong>Admin Key</strong>
+          <input id="adminKey" class="mono" type="password" placeholder="X-Admin-Key" />
+        </span>
+        <span class="pill">
+          <strong>2FA</strong>
+          <input id="admin2fa" class="mono" type="password" placeholder="X-Admin-2FA (opsiyonel)" />
+        </span>
+        <button id="saveKeyBtn" class="btn">Kaydet</button>
+        <button id="clearKeyBtn" class="btn btn-secondary">Temizle</button>
+        <button id="refreshBtn" class="btn">Yenile</button>
+        <span id="status" class="muted"></span>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>Özet (son <span id="mins">60</span> dk)</h3>
+        <div id="summary" class="small muted">—</div>
+        <div style="height: 10px"></div>
+        <div class="card" style="background:#f9fafb">
+          <h3>Lockdown</h3>
+          <div id="lockdownStatus" class="small muted">—</div>
+          <div style="height: 8px"></div>
+          <div class="toolbar">
+            <button id="lockdownOnBtn" class="btn btn-secondary">5 dk Aktif Et</button>
+            <button id="lockdownOffBtn" class="btn btn-secondary">Kapat</button>
+          </div>
+        </div>
+
+        <div style="height: 8px"></div>
+        <div class="row">
+          <div class="card" style="flex:1; min-width: 220px;">
+            <h3>Top Paths</h3>
+            <div id="topPaths" class="small muted">—</div>
+          </div>
+          <div class="card" style="flex:1; min-width: 220px;">
+            <h3>Top Sources (ban_key)</h3>
+            <div id="topSources" class="small muted">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Son Olaylar</h3>
+        <div class="muted small" style="margin-bottom: 8px;">Varsayılan: 200 kayıt</div>
+        <div style="max-height: 520px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 10px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Zaman</th>
+                <th>Tür</th>
+                <th>Path</th>
+                <th>Status</th>
+                <th>Weight</th>
+                <th>ban_key</th>
+                <th class="mono">details</th>
+              </tr>
+            </thead>
+            <tbody id="eventsBody">
+              <tr><td colspan="7" class="muted">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <p class="muted" style="margin-top: 18px;">Not: Panel, /api/admin/security/* endpoint'lerinden veri çeker.</p>
+  </div>
+
+<script>
+(function() {
+  const $ = (id) => document.getElementById(id);
+  const keyInput = $("adminKey");
+  const twofaInput = $("admin2fa");
+  const lockdownEl = $("lockdownStatus");
+  const statusEl = $("status");
+  const summaryEl = $("summary");
+  const topPathsEl = $("topPaths");
+  const topSourcesEl = $("topSources");
+  const eventsBody = $("eventsBody");
+
+  const STORAGE_KEY = "sm_admin_key";
+  const STORAGE_2FA = "sm_admin_2fa";
+
+  function setStatus(msg, isError=false) {
+    statusEl.textContent = msg || "";
+    statusEl.className = isError ? "muted err" : "muted";
+  }
+
+  function getKey() {
+    return localStorage.getItem(STORAGE_KEY) || "";
+  }
+
+  function setKey(k) {
+    if (!k) localStorage.removeItem(STORAGE_KEY);
+    else localStorage.setItem(STORAGE_KEY, k);
+  
+  function get2fa() {
+    return sessionStorage.getItem(STORAGE_2FA) || "";
+  }
+
+  function set2fa(v) {
+    if (!v) sessionStorage.removeItem(STORAGE_2FA);
+    else sessionStorage.setItem(STORAGE_2FA, v);
+  }
+
+}
+
+  async function apiGet(path) {
+    const k = getKey();
+    const r = await fetch(path, {
+      headers: {
+        "X-Admin-Key": k,
+        ...(get2fa() ? {"X-Admin-2FA": get2fa()} : {}),
+      }
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error(`${r.status} ${r.statusText}: ${t}`);
+    }
+    return await r.json();
+  }
+
+
+  async function apiPost(path, bodyObj) {
+    const k = getKey();
+    const r = await fetch(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Key": k,
+        ...(get2fa() ? {"X-Admin-2FA": get2fa()} : {}),
+      },
+      body: JSON.stringify(bodyObj || {}),
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error(`${r.status} ${r.statusText}: ${t}`);
+    }
+    return await r.json();
+  }
+
+  function fmtTs(ts) {
+    try {
+      const d = new Date(ts * 1000);
+      return d.toLocaleString();
+    } catch {
+      return String(ts);
+    }
+  }
+
+  function safeJson(obj) {
+    try { return JSON.stringify(obj); } catch { return String(obj); }
+  }
+
+  function renderList(items, labelKey, countKey) {
+    if (!items || !items.length) return "—";
+    return items.map(x => `<div><span class="mono">${(x[labelKey] || "").toString().slice(0, 60)}</span> <span class="muted">(${x[countKey]})</span></div>`).join("");
+  }
+
+  async function refresh() {
+    setStatus("Yükleniyor...");
+    summaryEl.innerHTML = "—";
+    topPathsEl.innerHTML = "—";
+    topSourcesEl.innerHTML = "—";
+    eventsBody.innerHTML = `<tr><td colspan="7" class="muted">Yükleniyor...</td></tr>`;
+
+    try {
+      const summary = await apiGet("/api/admin/security/summary?minutes=60");
+      const events = await apiGet("/api/admin/security/events?limit=200");
+      const lockdown = await apiGet("/api/admin/security/lockdown");
+
+      const byType = (summary.by_type || []).map(x => `<span class="tag">${x.event_type}: <strong>${x.count}</strong></span>`).join(" ");
+      summaryEl.innerHTML = byType || "—";
+      topPathsEl.innerHTML = renderList(summary.top_paths, "path", "count");
+      topSourcesEl.innerHTML = renderList(summary.top_sources, "ban_key", "count");
+
+      // Lockdown status
+      if (lockdown && typeof lockdown.active !== "undefined") {
+        if (lockdown.active) {
+          const rem = lockdown.remaining_sec || 0;
+          lockdownEl.innerHTML = `<span class="tag err">AKTİF</span> <span class="muted">kalan:</span> <span class="mono">${rem}s</span>`;
+        } else {
+          lockdownEl.innerHTML = `<span class="tag ok">KAPALI</span>`;
+        }
+      } else {
+        lockdownEl.innerHTML = "—";
+      }
+
+
+      const rows = (events.events || []).map(ev => {
+        const details = safeJson(ev.details || {});
+        return `
+          <tr>
+            <td class="small">${fmtTs(ev.ts)}</td>
+            <td><span class="tag">${ev.event_type}</span></td>
+            <td class="mono">${(ev.path || "").slice(0, 80)}</td>
+            <td>${ev.status ?? ""}</td>
+            <td>${ev.weight ?? ""}</td>
+            <td class="mono">${(ev.ban_key || "").slice(0, 18)}</td>
+            <td class="mono small">${details.slice(0, 220)}</td>
+          </tr>
+        `;
+      }).join("");
+
+      eventsBody.innerHTML = rows || `<tr><td colspan="7" class="muted">Kayıt yok</td></tr>`;
+
+      setStatus("OK", false);
+    } catch (e) {
+      console.error(e);
+      eventsBody.innerHTML = `<tr><td colspan="7" class="muted err">${String(e.message || e)}</td></tr>`;
+      setStatus("Hata: admin key doğru mu?", true);
+    }
+  }
+
+  // Init
+  keyInput.value = getKey();
+  twofaInput.value = get2fa();
+
+  $("saveKeyBtn").addEventListener("click", () => {
+    setKey(keyInput.value.trim());
+    set2fa(twofaInput.value.trim());
+    setStatus("Kaydedildi.");
+  });
+
+  $("clearKeyBtn").addEventListener("click", () => {
+    keyInput.value = "";
+    twofaInput.value = "";
+    setKey("");
+    set2fa("");
+    setStatus("Temizlendi.");
+  });
+
+  $("refreshBtn").addEventListener("click", refresh);
+
+  $("lockdownOnBtn").addEventListener("click", async () => {
+    try {
+      setStatus("Lockdown açılıyor...");
+      await apiPost("/api/admin/security/lockdown", { action: "activate", ttl_sec: 300 });
+      await refresh();
+    } catch (e) {
+      setStatus("Lockdown açılamadı: " + String(e.message || e), true);
+    }
+  });
+
+  $("lockdownOffBtn").addEventListener("click", async () => {
+    try {
+      setStatus("Lockdown kapatılıyor...");
+      await apiPost("/api/admin/security/lockdown", { action: "deactivate" });
+      await refresh();
+    } catch (e) {
+      setStatus("Lockdown kapatılamadı: " + String(e.message || e), true);
+    }
+  });
+
+
+  // Auto refresh every 15s
+  setInterval(() => {
+    if (getKey()) refresh();
+  }, 15000);
+})();
+</script>
+</body>
+</html>

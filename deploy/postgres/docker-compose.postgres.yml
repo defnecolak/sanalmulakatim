@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: sanal_mulakatim
+      POSTGRES_USER: sanal
+      POSTGRES_PASSWORD: change-me
+    ports:
+      - "127.0.0.1:5432:5432"  # expose only to localhost
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:

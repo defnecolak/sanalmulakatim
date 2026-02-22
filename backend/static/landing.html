@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sanal Mülakatım</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <div class="brand">
+        <h1>Sanal Mülakatım</h1>
+        <div class="tagline">Tek soru akışı • CV ile kişiselleştirme • Ses → Yazı</div>
+      </div>
+      <div class="row">
+        <a class="ghost linkBtn" href="/app">Uygulamayı Aç</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="card">
+      <h2 style="margin-top:0">Mülakata 15 dakikada ısın.</h2>
+      <p class="muted">
+        Rolünü seç, bir soru al, cevabını yaz ya da konuş, anında STAR (Durum, Görev, Eylem, Sonuç) odaklı geri bildirim gör.
+      </p>
+      <div class="row" style="margin-top:12px">
+        <a class="primary linkBtn" href="/app">Ücretsiz Dene</a>
+        <a class="ghost linkBtn" href="#pricing">Fiyatlandırma</a>
+      </div>
+      <div class="divider"></div>
+      <div class="grid3">
+        <div class="miniCard">
+          <div class="miniTitle">Tek soru akışı</div>
+          <div class="muted small">Soru → Cevap → Feedback → Sonraki.</div>
+        </div>
+        <div class="miniCard">
+          <div class="miniTitle">CV ile kişiselleştirme</div>
+          <div class="muted small">Sorular/feedback deneyimlerine göre uyarlanır. Hedef rol her zaman önceliklidir.</div>
+        </div>
+        <div class="miniCard">
+          <div class="miniTitle">Ses → yazı</div>
+          <div class="muted small">Kaydı durdurunca otomatik yazıya çevirir.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="pricing" class="card">
+      <h2>Fiyatlandırma</h2>
+      <div class="grid2">
+        <div class="priceCard">
+          <div class="priceTitle">Ücretsiz</div>
+          <div class="priceValue">0 TL</div>
+          <ul class="list">
+            <li>Toplam 3 değerlendirme denemesi</li>
+            <li>Ses → yazı (dahil)</li>
+            <li>PDF okuma (metin varsa)</li>
+          </ul>
+          <a class="primary linkBtn" href="/app">Başla</a>
+        </div>
+        <div class="priceCard">
+          <div class="priceTitle">Pro</div>
+          <div class="priceValue">—</div>
+          <ul class="list">
+            <li>Sınırsız değerlendirme</li>
+            <li>OCR ile taranmış PDF okuma</li>
+            <li>Yoğun kullanım için daha yüksek limit</li>
+          </ul>
+          <button id="buyBtn" class="primary">Pro’ya Geç</button>
+          <div id="buyHint" class="muted small" style="margin-top:8px"></div>
+        </div>
+      </div>
+      <div class="hint small" style="margin-top:10px">
+        Not: Bu bir eğitim aracıdır; özellikle klinik içerik gerçek klinik karar yerine geçmez.
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Gizlilik</h2>
+      <p class="muted">
+        Ses kaydını saklamıyoruz; sadece yazıya çevirme için işliyoruz. CV/cevaplar oturum boyunca kullanılır.
+        Detaylar için <a href="/privacy">Gizlilik Politikası</a> ve <a href="/terms">Kullanım Şartları</a>.
+      </p>
+    </section>
+
+    <footer class="footer muted small">
+      <span>© Sanal Mülakatım</span>
+      <span class="dot">•</span>
+      <a href="/privacy">Gizlilik</a>
+      <span class="dot">•</span>
+      <a href="/terms">Şartlar</a>
+      <span class="dot">•</span>
+      <a href="/app">Uygulama</a>
+      <span class="dot">•</span>
+      <a href="/recover">Pro Kurtarma</a>
+      <span class="dot">•</span>
+      <a href="/delete">Veri Silme</a>
+    </footer>
+  </main>
+
+  <script src="/static/landing.js"></script>
+</body>
+</html>

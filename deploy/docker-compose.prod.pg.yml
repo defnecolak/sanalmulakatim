@@ -1,0 +1,122 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${PG_DB:-sanal_mulakatim}
+      POSTGRES_USER: ${PG_USER:-sanal}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-change-me}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-sanal} -d ${PG_DB:-sanal_mulakatim} -h 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build: ..
+    env_file:
+      - ../backend/.env
+    environment:
+      - DB_ENGINE=postgres
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_DB=${PG_DB:-sanal_mulakatim}
+      - PG_USER=${PG_USER:-sanal}
+      - PG_PASSWORD=${PG_PASSWORD:-change-me}
+    command: ["bash", "-lc", "python backend/db_migrate.py --engine postgres --dir backend/migrations/postgres"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - db
+
+  app:
+    build: ..
+    env_file:
+      - ../backend/.env
+    environment:
+      - ADMIN_EDGE_TOKEN=${ADMIN_EDGE_TOKEN}
+      - DB_ENGINE=postgres
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_DB=${PG_DB:-sanal_mulakatim}
+      - PG_USER=${PG_USER:-sanal}
+      - PG_PASSWORD=${PG_PASSWORD:-change-me}
+    volumes:
+      # Still useful for non-DB runtime files; safe to keep mounted.
+      - ../backend/data:/app/backend/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5555/api/health', timeout=3).read()\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - web
+      - db
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+      - ACME_EMAIL=${ACME_EMAIL}
+      # Admin security panel protection (Caddy)
+      - ADMIN_ALLOW_IPS=${ADMIN_ALLOW_IPS}
+      - ADMIN_BASIC_USER=${ADMIN_BASIC_USER}
+      - ADMIN_BASIC_PASS_HASH=${ADMIN_BASIC_PASS_HASH}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./logs:/var/log/caddy
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - web
+
+networks:
+  web:
+  db:
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pgdata:

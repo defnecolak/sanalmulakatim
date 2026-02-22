@@ -1,0 +1,11 @@
+User-agent: *
+Disallow: /api/
+Disallow: /admin/
+Disallow: /admin/security
+Disallow: /delete
+Disallow: /pro/recover
+Disallow: /success
+Disallow: /cancel
+
+# Public pages
+Allow: /

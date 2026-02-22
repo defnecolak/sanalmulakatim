@@ -1,0 +1,14 @@
+{
+  "name": "interview-sim-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Playwright smoke tests for Sanal Mülakatım (Lite)",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

@@ -1,0 +1,77 @@
+version: "3.9"
+
+services:
+  app:
+    build: ..
+    env_file:
+      - ../backend/.env
+    environment:
+      - ADMIN_EDGE_TOKEN=${ADMIN_EDGE_TOKEN}
+    volumes:
+      - ../backend/data:/app/backend/data
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5555/api/health', timeout=3).read()\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Optional: limit resources a bit (adjust as needed)
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 1G
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+      - ACME_EMAIL=${ACME_EMAIL}
+      # Admin security panel protection (Caddy)
+      # Space-separated IPs / CIDRs, e.g.: "1.2.3.4 5.6.7.0/24"
+      - ADMIN_ALLOW_IPS=${ADMIN_ALLOW_IPS}
+      - ADMIN_BASIC_USER=${ADMIN_BASIC_USER}
+      - ADMIN_BASIC_PASS_HASH=${ADMIN_BASIC_PASS_HASH}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./logs:/var/log/caddy
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  caddy_data:
+  caddy_config:

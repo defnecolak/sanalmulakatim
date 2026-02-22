@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Gizlilik Politikası</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <div class="brand">
+        <h1>Gizlilik Politikası</h1>
+        <div class="tagline">Özet ve net: ne topluyoruz, ne yapıyoruz.</div>
+      </div>
+      <div class="row">
+        <a class="ghost linkBtn" href="/">← Ana Sayfa</a>
+        <a class="ghost linkBtn" href="/app">Uygulama</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="card">
+      <h2>Özet</h2>
+      <p class="muted">
+        <b>Sanal Mülakatım</b>, mülakat sorusu ve geri bildirim üretmek için <b>senin sağladığın içerikleri</b> işler.
+        Amacımız hizmeti çalıştırmak için gereken <b>minimum veriyi</b> kullanmak ve veriyi başka bir amaçla kullanmamaktır.
+      </p>
+
+      <h2>İşlenen veriler</h2>
+      <ul class="list">
+        <li><b>CV metni (opsiyonel)</b> ve <b>cevap metni</b>: soru/geri bildirimi kişiselleştirmek ve değerlendirme üretmek için.</li>
+        <li><b>CV PDF (opsiyonel)</b>: PDF’den metin çıkarmak; taranmış PDF ise <b>OCR</b> denemek için.</li>
+        <li><b>Ses (opsiyonel)</b>: sadece <b>ses → yazı</b> dönüşümü için işlenir. Ham ses dosyasını kalıcı saklamamayı hedefleriz.</li>
+        <li><b>Sınırlı teknik kayıtlar</b>: güvenlik, hizmet kalitesi ve kötüye kullanım önleme için minimum seviyede kayıtlar.</li>
+      </ul>
+
+      <h2>Veriyi ne için kullanırız?</h2>
+      <ul class="list">
+        <li>Mülakat sorusu üretmek ve cevaplarına göre geri bildirim oluşturmak.</li>
+        <li>PDF metin çıkarma / OCR ve ses → yazı özelliklerini çalıştırmak.</li>
+        <li>Hizmetin güvenliğini sağlamak ve kötüye kullanımı azaltmak.</li>
+      </ul>
+
+      <h2>Üçüncü taraflar</h2>
+      <p class="muted">
+        Soru üretimi, değerlendirme, OCR ve yazıya çevirme için <b>OpenAI API</b> kullanılır.
+        Bu işlemler için gerekli içerik (metin / PDF / ses) ilgili istek kapsamında OpenAI’a iletilir.
+      </p>
+
+      <h2>Saklama</h2>
+      <p class="muted">
+        Verileri yalnızca hizmeti sunmak ve güvenliği sağlamak için gerektiği süre boyunca saklarız.
+        Bazı teknik kayıtlar en fazla <b><span id="retentionDays">90</span> gün</b> tutulacak şekilde yapılandırılabilir.
+      </p>
+
+      <h2>Güvenlik</h2>
+      <p class="muted">
+        Makul teknik ve organizasyonel önlemler uygularız; ancak internet üzerinde %0 risk garantisi verilemez.
+        Lütfen CV’ne veya cevaplarına <b>hassas kişisel veriler</b> (kimlik, finansal bilgiler, şifreler vb.) ekleme.
+      </p>
+
+      <h2>Veri silme / iletişim</h2>
+      <p class="muted">
+        E-posta ile ilişkilendirilmiş verileri silmek/anonimleştirmek için <a href="/delete">Veri Silme</a> sayfasını kullanabilirsin.
+        Soruların ve taleplerin için <a data-support-email href="mailto:semi.ozgen@sanalmulakatim.com">semi.ozgen@sanalmulakatim.com</a> adresine yazabilirsin.
+      </p>
+
+      <div class="divider"></div>
+      <p class="muted small">
+        Bu metin genel bilgilendirme amaçlıdır; hukuki danışmanlık değildir.
+      </p>
+    </section>
+
+    <footer class="footer muted small">
+      <a href="/">Ana Sayfa</a><span class="dot">•</span><a href="/terms">Şartlar</a><span class="dot">•</span><a href="/refund">İade</a><span class="dot">•</span><a href="/contact">İletişim</a><span class="dot">•</span><a href="/app">Uygulama</a><span class="dot">•</span><a href="/recover">Pro Kurtarma</a><span class="dot">•</span><a href="/delete">Veri Silme</a>
+    </footer>
+  </main>
+  
+
+  <script src="/static/public_config.js" defer></script>
+  <script src="/static/privacy_page.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Local env
+backend/.env
+deploy/.env
+
+# Runtime data/logs
+backend/data/
+deploy/logs/
+deploy/backups/
+
+# Secrets directory (create your own)
+deploy/secrets_runtime/
+
+# OS
+.DS_Store
+Thumbs.db

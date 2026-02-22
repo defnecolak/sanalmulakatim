@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pro Aktivasyon</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <div class="brand">
+        <h1>Pro Aktivasyon</h1>
+        <div class="tagline">Ödemeniz alındıysa anahtar otomatik gelecektir.</div>
+      </div>
+      <div class="row">
+        <a class="ghost linkBtn" href="/app">Uygulamaya dön</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- Errors are shown here. Success info is shown in the green banner below. -->
+    <div id="globalAlert" class="alert hidden"></div>
+
+    <div id="okBanner" class="banner banner-ok hidden" role="status" aria-live="polite">
+      <div class="emoji" aria-hidden="true">✅</div>
+      <div>
+        <div id="bannerTitle" class="bannerTitle">Pro anahtarın hazır</div>
+        <div id="bannerBody" class="bannerBody"></div>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>Anahtar</h2>
+      <p class="muted">Ödeme yaptıysan, bu sayfa anahtarını doğrulayıp otomatik kaydeder. Bazen ödeme bildirimi 5–15 saniye gecikebilir.</p>
+
+      <div id="redeemLoading" class="loading hidden" aria-live="polite">
+        <div class="spinner" aria-hidden="true"></div>
+        <div>
+          <div id="redeemTitle" class="loadingTitle">Anahtar hazırlanıyor…</div>
+          <div id="redeemHint" class="hint small">Beklenmedik bir durumda “Tekrar dene” ile manuel çekebilirsin.</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Pro Anahtarın</label>
+        <input id="tokenBox" type="text" readonly />
+      </div>
+      <div class="row">
+        <button id="copyBtn" class="primary" disabled>Kopyala</button>
+        <button id="openPostPayBtn" class="ghost" type="button">E-posta + Anahtar</button>
+        <button id="retryBtn" class="ghost hidden" type="button">Tekrar dene</button>
+        <a class="ghost linkBtn" href="/app">Uygulamaya git</a>
+      </div>
+
+      <div id="checklist" class="checklist">
+        <div class="checklistTitle">Hızlı kontrol listesi</div>
+        <div class="todo">
+          <div class="todoItem todoDone"><span class="todoMark" aria-hidden="true">✓</span> Anahtar tarayıcıya otomatik kaydedildi.</div>
+          <label class="todoItem"><input id="chkCopied" type="checkbox" /> Anahtarı kopyaladım.</label>
+          <label class="todoItem"><input id="chkEmailed" type="checkbox" /> Anahtarı e-postama kaydettim (gönderildi / not aldım).</label>
+        </div>
+        <div class="todoNote">İpucu: E-posta gelmediyse Spam/Junk klasörüne de bak.</div>
+      </div>
+      <div class="hint small">Anahtar tarayıcıda saklanır (localStorage). Cihaz değiştirirsen ve daha önce anahtarı e-postana gönderdiysen <a href="/recover">Pro anahtar kurtarma</a> sayfasından tekrar alabilirsin. Verilerini silmek istersen <a href="/delete">veri silme</a> sayfasını kullan.</div>
+    </section>
+
+  </main>
+
+  <!-- Post-payment modal: ask for email + show key after payment -->
+  <div id="postPayOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="ppTitle">
+    <div class="modal">
+      <div class="modalHeader">
+        <h2 id="ppTitle" class="modalTitle">Pro erişimini tamamla</h2>
+        <button id="ppClose" class="iconBtn" type="button" aria-label="Kapat">✕</button>
+      </div>
+
+      <p class="muted">Pro anahtarın hazır. Kaybolmaması için kopyala ve e-postana gönder.</p>
+
+      <div class="field">
+        <label for="ppEmail">E-posta</label>
+        <input id="ppEmail" type="email" placeholder="ornek@mail.com" autocomplete="email" />
+      </div>
+
+      <div class="row">
+        <button id="ppSend" class="primary" type="button">E-postama Gönder</button>
+        <button id="ppSkip" class="ghost" type="button">Şimdi değil</button>
+      </div>
+
+      <div class="field">
+        <label for="ppToken">Pro Anahtarın</label>
+        <input id="ppToken" type="text" readonly />
+      </div>
+
+      <div class="row">
+        <button id="ppCopy" class="ghost" type="button">Anahtarı Kopyala</button>
+        <a class="ghost linkBtn" href="/app">Uygulamaya git</a>
+      </div>
+
+      <div id="ppStatus" class="hint small"></div>
+      <div class="hint small">İpucu: E-posta gelmediyse Spam/Junk klasörüne de bak.</div>
+    </div>
+  </div>
+
+  <script src="/static/success.js"></script>
+</body>
+</html>
