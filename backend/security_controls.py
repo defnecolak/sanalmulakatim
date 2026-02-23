@@ -32,7 +32,50 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
+from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.responses import JSONResponse
 
+
+class _BodyTooLarge(Exception):
+    pass
+
+
+class BodySizeLimitMiddleware:
+    """
+    Request body boyutunu sınırlar.
+    main.py: app.add_middleware(BodySizeLimitMiddleware, default_kb=...)
+    """
+
+    def __init__(self, app: ASGIApp, default_kb: int = 256):
+        self.app = app
+        self.max_bytes = int(default_kb) * 1024
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        # Hızlı blok: Content-Length varsa
+        headers = {k.decode("latin1").lower(): v.decode("latin1") for k, v in scope.get("headers", [])}
+        cl = headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > self.max_bytes:
+            return await JSONResponse({"detail": "Request body too large"}, status_code=413)(scope, receive, send)
+
+        seen = 0
+
+        async def limited_receive():
+            nonlocal seen
+            msg = await receive()
+            if msg["type"] == "http.request":
+                chunk = msg.get("body", b"")
+                seen += len(chunk)
+                if seen > self.max_bytes:
+                    raise _BodyTooLarge()
+            return msg
+
+        try:
+            return await self.app(scope, limited_receive, send)
+        except _BodyTooLarge:
+            return await JSONResponse({"detail": "Request body too large"}, status_code=413)(scope, receive, send)
 
 def _env_bool(name: str, default: bool) -> bool:
     v = os.environ.get(name)
