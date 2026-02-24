@@ -35,6 +35,8 @@
   const globalAlert = $("globalAlert");
   const keyBadge = $("keyBadge");
   const upgradeBtn = $("upgradeBtn");
+  let publicConfig = null;
+
 
 
   const roleEl = $("role");
@@ -247,6 +249,38 @@
     return j;
   }
 
+
+  // Billing / payments availability (we keep the app public; this only controls whether the "Pro" upgrade button is active)
+  async function refreshPublicConfig() {
+    try {
+      publicConfig = await apiGet("/api/public_config");
+    } catch (e) {
+      publicConfig = null;
+    }
+    applyBillingUiState();
+  }
+
+  function billingReady() {
+    if (!publicConfig) return false;
+    if (!publicConfig.payment_provider || publicConfig.payment_provider === "none") return false;
+    return !!(publicConfig.iyzico_configured || publicConfig.stripe_configured);
+  }
+
+  function applyBillingUiState() {
+    if (!upgradeBtn) return;
+
+    if (!billingReady()) {
+      upgradeBtn.disabled = true;
+      upgradeBtn.textContent = "Pro (Yakında)";
+      upgradeBtn.title = "Ödemeler yakında aktif olacak.";
+      return;
+    }
+
+    upgradeBtn.disabled = false;
+    upgradeBtn.textContent = "Pro'ya Geç";
+    upgradeBtn.title = "";
+  }
+
   // Health badge
   async function refreshHealth() {
     if (!apiBadge) return;
@@ -295,6 +329,10 @@
   }
 
   async function startUpgrade() {
+    if (!billingReady()) {
+      showAlert("Ödemeler yakında aktif olacak. Şimdilik ücretsiz devam edebilirsin.");
+      return;
+    }
     clearAlert();
     if (!upgradeBtn) return;
     upgradeBtn.disabled = true;
@@ -804,6 +842,7 @@ Sonuç:
 
   // Init
   renderKeyBadge();
+  refreshPublicConfig();
   refreshHealth();
   refreshUsage();
   refreshMics();
