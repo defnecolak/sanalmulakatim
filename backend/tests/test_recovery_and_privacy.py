@@ -51,12 +51,20 @@ def test_magic_link_recovery_flow(client, app_module, monkeypatch):
     assert m, body
     token = m.group(1)
 
-    c = client.get(f"/api/pro/recovery/consume?token={token}")
+    c = client.post(
+        "/api/pro/recovery/consume",
+        json={"token": token},
+        headers={"X-Client-ID": "cid_a"},
+    )
     assert c.status_code == 200
     assert "pro_testtoken" in c.json().get("tokens", [])
 
     # One-time token
-    c2 = client.get(f"/api/pro/recovery/consume?token={token}")
+    c2 = client.post(
+        "/api/pro/recovery/consume",
+        json={"token": token},
+        headers={"X-Client-ID": "cid_a"},
+    )
     assert c2.status_code == 400
 
 

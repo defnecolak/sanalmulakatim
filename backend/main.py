@@ -28,7 +28,11 @@ from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, List, Optional, Tuple
+from fastapi.responses import RedirectResponse
 
+@app.get("/admin")
+def admin_redirect():
+    return RedirectResponse(url="/admin/security", status_code=302)
 # PyMuPDF (fitz) — OCR/scan destekli PDF metin çıkarımı için.
 # Bazı ortamlarda kurulum eksik olabiliyor; bu durumda uygulama tamamen çökmesin.
 try:

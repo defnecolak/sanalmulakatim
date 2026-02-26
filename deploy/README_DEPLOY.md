@@ -1,17 +1,18 @@
 # Production Deploy (VPS + Docker Compose + Caddy HTTPS)
 
-Bu dosya, projeyi **tek sunucu** üzerinde (Ubuntu/Debian) Docker ile ayağa kaldırmak içindir.
+Bu doküman, projeyi **tek sunucu** üzerinde (Ubuntu/Debian) Docker ile ayağa kaldırmak içindir.
 Caddy otomatik HTTPS (Let's Encrypt) alır.
 
+> Not: Repo içinde `docs/internal/` klasörü operasyon/runbook içerir.
+> Repo’yu public yapacaksan bu klasörü public’e koyma.
+
 ## 0) Gerekenler
-- Bir **domain** (ör. `senindomainin.com`)
+- Bir **domain** (ör. `sanalmulakatim.com`)
 - Bir **VPS** (Ubuntu 22.04 önerilir)
 - VPS IP adresine DNS A kaydı
 - Sunucuda 80/443 portları açık
 
-## 1) Sunucuya Docker kur
-Ubuntu için hızlı kurulum:
-
+## 1) Sunucuya Docker kur (Ubuntu)
 ```bash
 sudo apt-get update
 sudo apt-get install -y ca-certificates curl gnupg
@@ -24,22 +25,13 @@ sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plug
 ```
 
 İsteğe bağlı: kullanıcıyı docker grubuna al:
-
 ```bash
 sudo usermod -aG docker $USER
 # sonra SSH'dan çık-gir
 ```
 
 ## 2) Projeyi sunucuya koy
-En basit: bu repo/zip'i sunucuya kopyala ve aç.
-Örnek:
-
-```bash
-mkdir -p ~/interview-sim
-cd ~/interview-sim
-# buraya dosyaları kopyala
-```
-
+Zip’i sunucuya kopyala ve aç.
 Klasör yapısı şöyle olmalı:
 
 ```
@@ -49,21 +41,20 @@ interview-sim-lite-launch/
   Dockerfile
 ```
 
-## 3) Uygulama ENV ayarla (backend/.env)
-`backend/.env.example` dosyasını kopyalayıp düzenle:
-
+## 3) Backend ENV ayarla (backend/.env)
 ```bash
 cd interview-sim-lite-launch
 cp backend/.env.example backend/.env
 nano backend/.env
 ```
 
-Production için kritik satırlar:
+Production için kritik:
 - `OPENAI_API_KEY=...`
-- `PUBLIC_BASE_URL=https://senindomainin.com`
-- Limitler: `FREE_EVALS_TOTAL`, `FREE_OCR_PER_DAY`, `RATE_LIMIT_PER_MINUTE` vs
-- Stripe kullanacaksan: `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`
-- iyzico kullanacaksan: `PAYMENT_PROVIDER=iyzico` + `IYZICO_API_KEY`, `IYZICO_SECRET_KEY`, `IYZICO_BASE_URL`, `PRO_PRICE_TRY`
+- `PUBLIC_BASE_URL=https://sanalmulakatim.com`
+- `SUPPORT_EMAIL=semi.ozgen@sanalmulakatim.com`
+- Limitler: `FREE_EVALS_TOTAL`, `FREE_OCR_PER_DAY`, endpoint bazlı rate limit’ler
+- Ödeme: `PAYMENT_PROVIDER=iyzico` + `IYZICO_*`
+- SMTP: `SMTP_*` (recovery + delete confirm mail için)
 
 ## 4) Caddy ENV ayarla (deploy/.env)
 ```bash
@@ -72,117 +63,120 @@ nano deploy/.env
 ```
 
 İçini doldur:
-- `DOMAIN=senindomainin.com`
+- `DOMAIN=sanalmulakatim.com`
 - `ACME_EMAIL=...`
 
-### Admin Güvenlik Paneli (opsiyonel ama önerilir)
+### Admin Security Panel (çok önerilir)
 Bu projede `/admin/security` ve `/api/admin/*` için **çok katmanlı** koruma var:
-- Caddy tarafında IP allowlist + Basic Auth
-- Backend tarafında `x-admin-key` (ve opsiyonel `x-admin-2fa`)
-- Ek olarak Caddy'nin backend'e enjekte ettiği `ADMIN_EDGE_TOKEN` header'ı (defence-in-depth)
-
-Yapılacaklar:
-- `backend/.env` içine:
-  - `ADMIN_STATUS_KEY=...` (uzun, rastgele)
-  - (opsiyonel) `ADMIN_2FA_KEY=...`
-- `deploy/.env` içine:
-  - `ADMIN_EDGE_TOKEN=...` (uzun, rastgele)
-  - `ADMIN_ALLOW_IPS=...` (sadece kendi IP'lerin)
-  - `ADMIN_BASIC_USER` / `ADMIN_BASIC_PASS_HASH`
-
-> Not: `ADMIN_EDGE_TOKEN` hem Caddy tarafında header olarak gönderilir hem de backend aynı değeri bekler.
-
+- Caddy: IP allowlist + Basic Auth (allowlist dışına 404)
+- Backend: `x-admin-key` (opsiyonel 2FA/TOTP)
+- Defence-in-depth: `ADMIN_EDGE_TOKEN` (Caddy → backend header)
 
 ## 5) DNS ayarı
 Domain panelinden:
 - `A` kaydı: `@` → VPS_IP
-- İstersen `www` için de `A`: `www` → VPS_IP
-
-DNS yayılımı bazen 5-30 dk sürer.
+- `www` için istersen `A`: `www` → VPS_IP
 
 ## 6) Çalıştır (tek komut)
+### Seçenek A: SQLite (tek instance / en basit)
 ```bash
-cd ~/interview-sim/interview-sim-lite-launch
 docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml up -d --build
+```
+
+### Seçenek B: Postgres (blue/green + multi-instance için önerilir)
+Postgres deploy dosyası DB'yi internetten izole eder (internal network) ve
+ayrıca otomatik migration runner (`migrate` servisi) çalıştırır.
+
+Önce `deploy/.env` içine PG bilgilerini ekle:
+- `PG_DB=sanal_mulakatim`
+- `PG_USER=sanal`
+- `PG_PASSWORD=...` (prod'da güçlü)
+
+Sonra:
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.pg.yml up -d --build
 ```
 
 Log:
 ```bash
-docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml logs -f
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml logs -f --tail=200
+```
+
+Postgres compose ile log:
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.pg.yml logs -f --tail=200
 ```
 
 ## 7) Güncelleme
-Yeni sürüm attıysan:
+Basit (downtime çok az, ama “immutable blue/green” değil):
 ```bash
 docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml up -d --build
 ```
 
-## 8) Stripe Webhook (production)
-Stripe dashboard'da webhook endpoint:
-- `https://senindomainin.com/api/billing/webhook`
+Immutable Blue/Green için: `deploy/bluegreen/` klasörüne bak.
 
-Event: `checkout.session.completed`
-
-Local test için Stripe CLI kullanılabilir.
-
-## 9) Troubleshooting
-- HTTPS gelmiyorsa: DNS A kaydı doğru mu? 80/443 açık mı?
-- 502: app container ayakta mı? `docker ps`, `docker logs`
-- OpenAI hatası: backend/.env içinde key var mı? `OPENAI_API_KEY`
-## 10) Healthcheck / Auto-restart
-Bu compose dosyasında `app` servisi için healthcheck var.
-Durum görmek için:
-
+## 8) Healthcheck
 ```bash
-docker ps
-docker inspect --format='{{json .State.Health}}' $(docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml ps -q app) | jq
+curl -fsS https://DOMAIN/api/healthz
 ```
 
-## 11) Log rotation
-Docker container logları `max-size` / `max-file` ile sınırlandı (json-file).
-Uygulama ayrıca `backend/data/app.log` içine de log yazar.
+## 9) Backup / Restore
+Backup’lar: `deploy/backups/`
 
-## 12) Backup / Restore (SQLite + loglar)
-SQLite ve loglar `backend/data/` altında. Hızlı backup:
-
+Backup:
 ```bash
 ./deploy/backup.sh
 ```
 
-Geri yükleme:
-
+Integrity verify:
 ```bash
-./deploy/restore.sh ./backups/data-YYYYMMDD-HHMMSS.tar.gz
-# sonra containerları restart et
+./deploy/verify_backup.sh ./deploy/backups/backup-....tar.gz
+```
+
+Restore:
+```bash
+./deploy/restore.sh ./deploy/backups/backup-....tar.gz
 docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml up -d
 ```
 
-Cron ile günlük backup örneği:
+### systemd timer (cron yerine)
+`deploy/systemd/` içindeki unit’leri /etc/systemd/system/ altına kopyalayıp aktif edebilirsin.
+Detay: `docs/internal/BACKUP_RESTORE.md`
 
+## 10) Merkezi log (Loki)
+`deploy/observability/loki/` altında basit Loki+Promtail+Grafana stack var.
+Detay: `docs/internal/OBSERVABILITY_LOKI.md`
+
+## 11) Cloudflare export/import
+`deploy/cloudflare/` scriptleri ile zone ruleset’leri export/import edebilirsin.
+Detay: `docs/internal/CLOUDFLARE_WAF.md`
+
+## 12) Docker secrets (önerilen)
+
+Prod’da secret’ları `.env` içinde taşımak yerine Docker secrets kullanabilirsin.
+
+- Detay: `deploy/secrets/README.md`
+- Örnek override: `deploy/docker-compose.prod.secrets.yml`
+
+Örnek:
 ```bash
-crontab -e
-# her gece 03:10
-10 3 * * * /bin/bash /home/ubuntu/interview-sim/interview-sim-lite-launch/deploy/backup.sh >/dev/null 2>&1
+docker compose --env-file deploy/.env \
+  -f deploy/docker-compose.prod.yml \
+  -f deploy/docker-compose.prod.secrets.yml \
+  up -d --build
 ```
 
-## 13) WAF + otomatik ban (uygulama içi)
+## 13) Admin paneli internete hiç açma (localhost port + SSH tunnel)
 
-Backend içinde düşük “false positive” hedefleyen basit bir WAF katmanı var:
-- Botların sık denediği path’leri (ör. `/wp-admin`, `/.env`, `phpmyadmin`) direkt 403’ler
-- URL/query/header üzerinde bariz saldırı pattern’lerini yakalar
-- Aşırı agresif denemelerde geçici ban (ban list) uygular
+En güvenlisi:
+- Caddy’de admin’i ayrı bir internal porttan (8081) servis etmek
+- host’ta sadece `127.0.0.1:8081` olarak publish etmek
+- SSH tunnel ile erişmek
 
-Ayarlar `.env` ile:
+Detay: `deploy/host_hardening/admin_local_port.md`
 
-- `WAF_ENABLED=1` / `WAF_BLOCK=1`
-- `BAN_ENABLED=1`, `BAN_THRESHOLD`, `BAN_WINDOW_SEC`, `BAN_TTL_SEC`
+## 14) Host hardening + Zero Trust
 
-> Bu katman, “cevap/CV” gibi serbest metin alanlarını agresif şekilde taramaz.
-> Amaç bot scan’lerini kesmek, gerçek kullanıcıyı yanlışlıkla engellememektir.
-
-## 14) Fail2ban (opsiyonel)
-
-Sunucu seviyesinde bir katman istiyorsan `deploy/fail2ban/` altındaki örnek konfigürasyonları kullanabilirsin.
-Caddy erişim logunu dosyaya yazdırıyoruz (`deploy/Caddyfile`), böylece Fail2ban log üzerinden ban uygular.
-
-Detaylar için: `deploy/fail2ban/README.md`
+- UFW/SSH/fail2ban/unattended upgrades: `deploy/host_hardening/README.md`
+- Tailscale: `deploy/zero_trust/TAILSCALE.md`
+- Cloudflare Access/Tunnel: `deploy/zero_trust/CLOUDFLARE_ACCESS.md`

@@ -28,74 +28,56 @@ import json
 import os
 import re
 import sqlite3
+import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
-from starlette.types import ASGIApp, Receive, Scope, Send
-from starlette.responses import JSONResponse
+
+# Optional DB: Postgres
+try:
+    import psycopg  # type: ignore
+    from psycopg.rows import dict_row  # type: ignore
+except Exception:  # pragma: no cover
+    psycopg = None  # type: ignore
+    dict_row = None  # type: ignore
 
 
-class _BodyTooLarge(Exception):
-    pass
-
-
-class BodySizeLimitMiddleware:
-    """
-    Request body boyutunu sınırlar.
-    main.py: app.add_middleware(BodySizeLimitMiddleware, default_kb=...)
-    """
-
-    def __init__(self, app: ASGIApp, default_kb: int = 256):
-        self.app = app
-        self.max_bytes = int(default_kb) * 1024
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send):
-        if scope["type"] != "http":
-            return await self.app(scope, receive, send)
-
-        # Hızlı blok: Content-Length varsa
-        headers = {k.decode("latin1").lower(): v.decode("latin1") for k, v in scope.get("headers", [])}
-        cl = headers.get("content-length")
-        if cl and cl.isdigit() and int(cl) > self.max_bytes:
-            return await JSONResponse({"detail": "Request body too large"}, status_code=413)(scope, receive, send)
-
-        seen = 0
-
-        async def limited_receive():
-            nonlocal seen
-            msg = await receive()
-            if msg["type"] == "http.request":
-                chunk = msg.get("body", b"")
-                seen += len(chunk)
-                if seen > self.max_bytes:
-                    raise _BodyTooLarge()
-            return msg
-
+def _read_env_raw(name: str) -> Optional[str]:
+    """Read env var, optionally from NAME_FILE (Docker/K8s secrets)."""
+    v = os.environ.get(name)
+    if v is not None and v.strip() != "":
+        return v
+    fp = (os.environ.get(f"{name}_FILE") or "").strip()
+    if fp:
         try:
-            return await self.app(scope, limited_receive, send)
-        except _BodyTooLarge:
-            return await JSONResponse({"detail": "Request body too large"}, status_code=413)(scope, receive, send)
+            with open(fp, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except Exception:
+            return None
+    return None
+
 
 def _env_bool(name: str, default: bool) -> bool:
-    v = os.environ.get(name)
-    if v is None:
+    raw = _read_env_raw(name)
+    if raw is None:
         return default
-    return v.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _env_int(name: str, default: int) -> int:
-    v = os.environ.get(name)
-    if v is None:
+    raw = _read_env_raw(name)
+    if raw is None:
         return default
     try:
-        return int(v)
+        return int(raw)
     except ValueError:
         return default
 
 
 def _env_csv_int_set(name: str, default: Sequence[int]) -> set[int]:
-    v = os.environ.get(name)
+
+    v = _read_env_raw(name)
     if not v:
         return set(default)
     out: set[int] = set()
@@ -108,6 +90,33 @@ def _env_csv_int_set(name: str, default: Sequence[int]) -> set[int]:
         except ValueError:
             continue
     return out or set(default)
+
+
+def _pg_url_from_env() -> str:
+    """Returns a Postgres connection URL if configured, else empty string."""
+    url = (os.environ.get("DATABASE_URL") or "").strip()
+    if url:
+        return url
+    engine = (os.environ.get("DB_ENGINE") or "").strip().lower()
+    if engine != "postgres":
+        return ""
+    host = (os.environ.get("PG_HOST") or "postgres").strip() or "postgres"
+    port = (os.environ.get("PG_PORT") or "5432").strip() or "5432"
+    user = (os.environ.get("PG_USER") or "sanal").strip() or "sanal"
+    password = (os.environ.get("PG_PASSWORD") or "").strip()
+    db = (os.environ.get("PG_DB") or "sanal_mulakatim").strip() or "sanal_mulakatim"
+    if password:
+        # best-effort URL escaping
+        pw = urllib.parse.quote(password, safe="")
+        return f"postgresql://{user}:{pw}@{host}:{port}/{db}"
+    return f"postgresql://{user}@{host}:{port}/{db}"
+
+
+def _use_postgres() -> bool:
+    u = (os.environ.get("DATABASE_URL") or "").strip().lower()
+    if u.startswith("postgres://") or u.startswith("postgresql://"):
+        return True
+    return (os.environ.get("DB_ENGINE") or "").strip().lower() == "postgres"
 
 
 @dataclass(frozen=True)
@@ -192,7 +201,7 @@ def ban_key_for_request(request, salt: str) -> str:
 
 
 
-class BanDB:
+class SQLiteBanDB:
     """SQLite-backed ban list.
 
     Stores ban_key only (hashed). Does not store raw IP.
@@ -237,7 +246,6 @@ class BanDB:
                 return False
             if int(row["expires_at"]) > now_ts:
                 return True
-            # expired -> cleanup
             conn.execute("DELETE FROM ip_bans WHERE ban_key = ?", (ban_key,))
             conn.commit()
             return False
@@ -261,6 +269,81 @@ class BanDB:
             conn.commit()
         finally:
             conn.close()
+
+
+class PostgresBanDB:
+    """Postgres-backed ban list (same API as SQLiteBanDB)."""
+
+    def __init__(self, url: str):
+        if psycopg is None or dict_row is None:  # pragma: no cover
+            raise RuntimeError("Postgres seçildi ama psycopg kurulu değil")
+        self.url = url
+        self._lock = threading.Lock()
+        self._conn = psycopg.connect(self.url, connect_timeout=8, row_factory=dict_row)
+        self._init_db()
+
+    def _init_db(self) -> None:
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS ip_bans (
+                        ban_key TEXT PRIMARY KEY,
+                        reason TEXT,
+                        created_at BIGINT NOT NULL,
+                        expires_at BIGINT NOT NULL
+                    );
+                    """
+                )
+            self._conn.commit()
+
+    def is_banned(self, ban_key: str, now_ts: Optional[int] = None) -> bool:
+        now_ts = int(time.time()) if now_ts is None else int(now_ts)
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute("SELECT expires_at FROM ip_bans WHERE ban_key=%s", (ban_key,))
+                row = cur.fetchone()
+                if not row:
+                    return False
+                if int(row["expires_at"]) > now_ts:
+                    return True
+                cur.execute("DELETE FROM ip_bans WHERE ban_key=%s", (ban_key,))
+            self._conn.commit()
+        return False
+
+    def ban(self, ban_key: str, ttl_sec: int, reason: str = "aggressive") -> None:
+        now_ts = int(time.time())
+        exp = now_ts + int(ttl_sec)
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ip_bans (ban_key, reason, created_at, expires_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT(ban_key)
+                    DO UPDATE SET reason=EXCLUDED.reason, created_at=EXCLUDED.created_at, expires_at=EXCLUDED.expires_at;
+                    """,
+                    (ban_key, reason[:200], now_ts, exp),
+                )
+            self._conn.commit()
+
+
+class BanDB:
+    """Facade: chooses SQLite vs Postgres based on env."""
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self.engine = "postgres" if _use_postgres() else "sqlite"
+        if self.engine == "postgres":
+            url = _pg_url_from_env()
+            if not url:
+                raise RuntimeError("DB_ENGINE=postgres ama DATABASE_URL/PG_* yok")
+            self._impl = PostgresBanDB(url)
+        else:
+            self._impl = SQLiteBanDB(db_path)
+
+    def __getattr__(self, name: str):
+        return getattr(self._impl, name)
 
 
 class StrikeTracker:
@@ -464,6 +547,10 @@ def body_limit_for_path(path: str) -> int:
     if path.startswith("/api/admin/"):
         return _env_int("ADMIN_MAX_BODY_BYTES", 32 * 1024)
 
+    # Billing / ödeme endpointleri küçük payload olmalı
+    if path.startswith("/api/billing/") or path.startswith("/api/iyzico/"):
+        return _env_int("BILLING_MAX_BODY_BYTES", 32 * 1024)
+
     # Evaluate can be larger (answer + CV), but still bounded
     if path.startswith("/api/evaluate"):
         return _env_int("EVAL_MAX_BODY_BYTES", 256 * 1024)
@@ -479,13 +566,96 @@ def body_limit_for_path(path: str) -> int:
     return _env_int("MAX_BODY_BYTES", 128 * 1024)
 
 
-class SecurityEventDB:
-    """Stores security-relevant events in SQLite for a simple admin panel.
 
-    Notes:
-    - We store *no raw IP*. Use ban_key (hashed) + client_id (hashed) for correlation.
-    - Keep details small; this is not a full request logger.
+class PayloadTooLarge(Exception):
+    """Raised internally when the request body exceeds the configured limit."""
+    pass
+
+
+def _scope_header(scope: dict, name: bytes) -> Optional[str]:
+    """Read a header value from an ASGI scope."""
+    try:
+        headers = scope.get("headers") or []
+        for k, v in headers:
+            if (k or b"").lower() == name:
+                try:
+                    return (v or b"").decode("latin-1")
+                except Exception:
+                    return None
+    except Exception:
+        return None
+    return None
+
+
+async def _send_json(send, status: int, payload: dict) -> None:
+    import json
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    await send(
+        {
+            "type": "http.response.start",
+            "status": int(status),
+            "headers": [
+                (b"content-type", b"application/json; charset=utf-8"),
+                (b"cache-control", b"no-store"),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body, "more_body": False})
+
+
+class BodySizeLimitMiddleware:
+    """ASGI middleware to enforce request body size limits even if Content-Length is missing/spoofed.
+
+    This complements the fast Content-Length pre-check in the HTTP middleware layer.
     """
+
+    def __init__(self, app, *, default_kb: int = 256):
+        self.app = app
+        self.default_kb = int(default_kb)
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            return await self.app(scope, receive, send)
+
+        path = scope.get("path") or ""
+        max_bytes = body_limit_for_path(path)
+        try:
+            max_bytes_int = int(max_bytes) if max_bytes is not None else int(self.default_kb * 1024)
+        except Exception:
+            max_bytes_int = int(self.default_kb * 1024)
+
+        # Fast path if Content-Length is present
+        cl = _scope_header(scope, b"content-length")
+        if cl:
+            try:
+                if int(cl) > max_bytes_int:
+                    await _send_json(send, 413, {"detail": "payload_too_large"})
+                    return
+            except Exception:
+                pass
+
+        received = 0
+
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            if message.get("type") == "http.request":
+                chunk = message.get("body") or b""
+                received += len(chunk)
+                if received > max_bytes_int:
+                    raise PayloadTooLarge()
+            return message
+
+        try:
+            return await self.app(scope, limited_receive, send)
+        except PayloadTooLarge:
+            await _send_json(send, 413, {"detail": "payload_too_large"})
+            return
+
+
+
+class SQLiteSecurityEventDB:
+    """SQLite-backed security event stream for the admin security panel."""
 
     def __init__(self, db_path: str, retention_days: int = 30):
         self.db_path = db_path
@@ -537,7 +707,6 @@ class SecurityEventDB:
         ua: str | None = None,
         details: dict | None = None,
     ) -> None:
-        # Best-effort: never fail the request because logging failed.
         try:
             con = self._connect()
             try:
@@ -607,12 +776,11 @@ class SecurityEventDB:
             con.close()
 
     def summary(self, minutes: int = 60) -> dict:
-        minutes = max(1, min(int(minutes), 60 * 24 * 30))  # up to 30 days
+        minutes = max(1, min(int(minutes), 60 * 24 * 30))
         since_ts = int(time.time()) - (minutes * 60)
         con = self._connect()
         try:
             cur = con.cursor()
-
             cur.execute(
                 """
                 SELECT event_type, COUNT(*) as c
@@ -661,10 +829,7 @@ class SecurityEventDB:
         finally:
             con.close()
 
-
-
     def count_since(self, event_types: Sequence[str], since_ts: int) -> int:
-        """Count events since `since_ts` for the given types (best-effort)."""
         try:
             et = [str(x) for x in (event_types or []) if str(x)]
             if not et:
@@ -686,7 +851,6 @@ class SecurityEventDB:
             return 0
 
     def count_distinct_ban_keys_since(self, event_types: Sequence[str], since_ts: int) -> int:
-        """Count distinct ban_key sources since `since_ts` for the given types."""
         try:
             et = [str(x) for x in (event_types or []) if str(x)]
             if not et:
@@ -711,6 +875,7 @@ class SecurityEventDB:
                 con.close()
         except Exception:
             return 0
+
     def prune(self) -> None:
         cutoff = int(time.time()) - int(self.retention_days * 86400)
         con = self._connect()
@@ -720,3 +885,236 @@ class SecurityEventDB:
             con.commit()
         finally:
             con.close()
+
+
+class PostgresSecurityEventDB:
+    """Postgres-backed security event stream (same API as SQLiteSecurityEventDB)."""
+
+    def __init__(self, url: str, retention_days: int = 30):
+        if psycopg is None or dict_row is None:  # pragma: no cover
+            raise RuntimeError("Postgres seçildi ama psycopg kurulu değil")
+        self.url = url
+        self.retention_days = max(1, int(retention_days))
+        self._lock = threading.Lock()
+        self._conn = psycopg.connect(self.url, connect_timeout=8, row_factory=dict_row)
+        self._init_db()
+        self.prune()
+
+    def _init_db(self) -> None:
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS security_events (
+                        id BIGSERIAL PRIMARY KEY,
+                        ts BIGINT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        ban_key TEXT,
+                        client_id TEXT,
+                        method TEXT,
+                        path TEXT,
+                        status INTEGER,
+                        weight INTEGER,
+                        ua TEXT,
+                        details TEXT
+                    );
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_security_events_ts ON security_events(ts)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_security_events_type ON security_events(event_type)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_security_events_bankey ON security_events(ban_key)")
+            self._conn.commit()
+
+    def log(
+        self,
+        event_type: str,
+        *,
+        ban_key: str | None = None,
+        client_id: str | None = None,
+        method: str | None = None,
+        path: str | None = None,
+        status: int | None = None,
+        weight: int | None = None,
+        ua: str | None = None,
+        details: dict | None = None,
+    ) -> None:
+        try:
+            with self._lock:
+                with self._conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO security_events
+                          (ts, event_type, ban_key, client_id, method, path, status, weight, ua, details)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        """,
+                        (
+                            int(time.time()),
+                            event_type[:64],
+                            (ban_key or "")[:128] or None,
+                            (client_id or "")[:128] or None,
+                            (method or "")[:16] or None,
+                            (path or "")[:256] or None,
+                            status,
+                            weight,
+                            ((ua or "")[:200] or None),
+                            json.dumps(details or {}, ensure_ascii=False)[:2000],
+                        ),
+                    )
+                self._conn.commit()
+        except Exception:
+            return
+
+    def recent(self, limit: int = 200) -> list[dict]:
+        limit = max(1, min(int(limit), 1000))
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT ts, event_type, ban_key, client_id, method, path, status, weight, ua, details
+                    FROM security_events
+                    ORDER BY ts DESC, id DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = cur.fetchall() or []
+        out: list[dict] = []
+        for r in rows:
+            details_raw = r.get("details")
+            try:
+                details_obj = json.loads(details_raw) if details_raw else {}
+            except Exception:
+                details_obj = {"raw": details_raw}
+            out.append(
+                {
+                    "ts": r.get("ts"),
+                    "event_type": r.get("event_type"),
+                    "ban_key": r.get("ban_key"),
+                    "client_id": r.get("client_id"),
+                    "method": r.get("method"),
+                    "path": r.get("path"),
+                    "status": r.get("status"),
+                    "weight": r.get("weight"),
+                    "ua": r.get("ua"),
+                    "details": details_obj,
+                }
+            )
+        return out
+
+    def summary(self, minutes: int = 60) -> dict:
+        minutes = max(1, min(int(minutes), 60 * 24 * 30))
+        since_ts = int(time.time()) - (minutes * 60)
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT event_type, COUNT(*) as c
+                    FROM security_events
+                    WHERE ts >= %s
+                    GROUP BY event_type
+                    ORDER BY c DESC
+                    """,
+                    (since_ts,),
+                )
+                by_type = [{"event_type": r["event_type"], "count": r["c"]} for r in (cur.fetchall() or [])]
+
+                cur.execute(
+                    """
+                    SELECT path, COUNT(*) as c
+                    FROM security_events
+                    WHERE ts >= %s AND path IS NOT NULL
+                    GROUP BY path
+                    ORDER BY c DESC
+                    LIMIT 10
+                    """,
+                    (since_ts,),
+                )
+                top_paths = [{"path": r["path"], "count": r["c"]} for r in (cur.fetchall() or [])]
+
+                cur.execute(
+                    """
+                    SELECT ban_key, COUNT(*) as c
+                    FROM security_events
+                    WHERE ts >= %s AND ban_key IS NOT NULL
+                    GROUP BY ban_key
+                    ORDER BY c DESC
+                    LIMIT 10
+                    """,
+                    (since_ts,),
+                )
+                top_sources = [{"ban_key": r["ban_key"], "count": r["c"]} for r in (cur.fetchall() or [])]
+
+        return {
+            "minutes": minutes,
+            "since_ts": since_ts,
+            "by_type": by_type,
+            "top_paths": top_paths,
+            "top_sources": top_sources,
+        }
+
+    def count_since(self, event_types: Sequence[str], since_ts: int) -> int:
+        try:
+            et = [str(x) for x in (event_types or []) if str(x)]
+            if not et:
+                return 0
+            since_ts = int(since_ts)
+            placeholders = ",".join(["%s"] * len(et))
+            with self._lock:
+                with self._conn.cursor() as cur:
+                    cur.execute(
+                        f"SELECT COUNT(*) AS c FROM security_events WHERE ts >= %s AND event_type IN ({placeholders})",
+                        (since_ts, *et),
+                    )
+                    row = cur.fetchone()
+            return int(row["c"] if row else 0)
+        except Exception:
+            return 0
+
+    def count_distinct_ban_keys_since(self, event_types: Sequence[str], since_ts: int) -> int:
+        try:
+            et = [str(x) for x in (event_types or []) if str(x)]
+            if not et:
+                return 0
+            since_ts = int(since_ts)
+            placeholders = ",".join(["%s"] * len(et))
+            with self._lock:
+                with self._conn.cursor() as cur:
+                    cur.execute(
+                        f"""SELECT COUNT(DISTINCT ban_key) AS c
+                            FROM security_events
+                            WHERE ts >= %s
+                              AND ban_key IS NOT NULL
+                              AND event_type IN ({placeholders})
+                        """,
+                        (since_ts, *et),
+                    )
+                    row = cur.fetchone()
+            return int(row["c"] if row else 0)
+        except Exception:
+            return 0
+
+    def prune(self) -> None:
+        cutoff = int(time.time()) - int(self.retention_days * 86400)
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute("DELETE FROM security_events WHERE ts < %s", (cutoff,))
+            self._conn.commit()
+
+
+class SecurityEventDB:
+    """Facade: chooses SQLite vs Postgres based on env."""
+
+    def __init__(self, db_path: str, retention_days: int = 30):
+        self.db_path = db_path
+        self.retention_days = max(1, int(retention_days))
+        self.engine = "postgres" if _use_postgres() else "sqlite"
+        if self.engine == "postgres":
+            url = _pg_url_from_env()
+            if not url:
+                raise RuntimeError("DB_ENGINE=postgres ama DATABASE_URL/PG_* yok")
+            self._impl = PostgresSecurityEventDB(url, retention_days=self.retention_days)
+        else:
+            self._impl = SQLiteSecurityEventDB(db_path, retention_days=self.retention_days)
+
+    def __getattr__(self, name: str):
+        return getattr(self._impl, name)

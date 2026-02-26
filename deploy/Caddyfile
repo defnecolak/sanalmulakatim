@@ -25,8 +25,14 @@
         Referrer-Policy "no-referrer"
     }
 
+    # Block unusual HTTP methods (reduces scanner noise)
+    @badmethods method TRACE TRACK CONNECT
+    handle @badmethods {
+        respond 405
+    }
+
     # Block common scanner paths early (optional but reduces noise / load)
-    @badpaths path /wp-admin* /wp-login.php /xmlrpc.php /phpmyadmin* /phpMyAdmin* /cgi-bin* /.env /actuator* /jenkins* /server-status
+    @badpaths path /wp-admin* /wp-login.php /xmlrpc.php /phpmyadmin* /phpMyAdmin* /cgi-bin* /.env /actuator* /jenkins* /server-status /.git* /.svn* /.hg*
     handle @badpaths {
         respond 403
     }
@@ -60,4 +66,19 @@
     }
 
     reverse_proxy app:5555
+}
+
+# Local-only admin access (recommended):
+# Map this port to 127.0.0.1 only via docker-compose.prod.admin-local.yml
+:8081 {
+    encode gzip
+
+    # Basic auth on localhost port too (defence-in-depth)
+    basicauth {
+        {$ADMIN_BASIC_USER} {$ADMIN_BASIC_PASS_HASH}
+    }
+
+    reverse_proxy app:5555 {
+        header_up X-Admin-Edge-Token {$ADMIN_EDGE_TOKEN}
+    }
 }
