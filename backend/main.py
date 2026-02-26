@@ -30,9 +30,6 @@ from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, List, Optional, Tuple
 from fastapi.responses import RedirectResponse
 
-@app.get("/admin")
-def admin_redirect():
-    return RedirectResponse(url="/admin/security", status_code=302)
 # PyMuPDF (fitz) — OCR/scan destekli PDF metin çıkarımı için.
 # Bazı ortamlarda kurulum eksik olabiliyor; bu durumda uygulama tamamen çökmesin.
 try:
@@ -3590,6 +3587,11 @@ def admin_selfcheck(request: Request):
         },
     }
 
+
+
+@app.get("/admin", include_in_schema=False)
+def admin_redirect():
+    return RedirectResponse(url="/admin/security", status_code=302)
 
 @app.get("/admin/security", include_in_schema=False)
 def admin_security_panel(request: Request):
