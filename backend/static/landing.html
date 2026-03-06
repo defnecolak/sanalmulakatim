@@ -10,10 +10,12 @@
   <header class="top">
     <div class="wrap">
       <div class="brand">
-        <h1>Sanal Mülakatım</h1>
+        <h1 data-app-name>Sanal Mülakatım</h1>
         <div class="tagline">Tek soru akışı • CV ile kişiselleştirme • Ses → Yazı</div>
       </div>
       <div class="row">
+        <a class="ghost linkBtn" href="/about">Hakkımızda</a>
+        <a class="ghost linkBtn" href="/contact">İletişim</a>
         <a class="ghost linkBtn" href="/app">Uygulamayı Aç</a>
       </div>
     </div>
@@ -21,13 +23,32 @@
 
   <main class="wrap">
     <section class="card">
-      <h2 style="margin-top:0">Mülakata 15 dakikada ısın.</h2>
-      <p class="muted">
-        Rolünü seç, bir soru al, cevabını yaz ya da konuş, anında STAR (Durum, Görev, Eylem, Sonuç) odaklı geri bildirim gör.
-      </p>
-      <div class="row" style="margin-top:12px">
-        <a class="primary linkBtn" href="/app">Ücretsiz Dene</a>
-        <a class="ghost linkBtn" href="#pricing">Fiyatlandırma</a>
+      <div class="heroGrid">
+        <div>
+          <span class="heroBadge">Dijital mülakat pratiği</span>
+          <h2 style="margin-top:12px">Mülakata 15 dakikada ısın.</h2>
+          <p class="muted">
+            Rolünü seç, bir soru al, cevabını yaz ya da konuş, anında STAR (Durum, Görev, Eylem, Sonuç) odaklı geri bildirim gör.
+          </p>
+          <div class="row" style="margin-top:12px">
+            <a class="primary linkBtn" href="/app">Ücretsiz Dene</a>
+            <a class="ghost linkBtn" href="#pricing">Fiyatlandırma</a>
+            <a class="ghost linkBtn" href="#contactBlock">İletişim</a>
+          </div>
+        </div>
+        <div class="heroCard">
+          <div class="miniTitle">Neler var?</div>
+          <ul class="list compactList">
+            <li>Tek soru akışı</li>
+            <li>CV ile kişiselleştirme</li>
+            <li>Ses → yazı</li>
+            <li>PDF / OCR desteği</li>
+          </ul>
+          <div class="divider"></div>
+          <div class="muted small">
+            Bu servis eğitim ve hazırlık amaçlıdır. Nihai işe alım, klinik veya hukuki karar yerine geçmez.
+          </div>
+        </div>
       </div>
       <div class="divider"></div>
       <div class="grid3">
@@ -37,7 +58,7 @@
         </div>
         <div class="miniCard">
           <div class="miniTitle">CV ile kişiselleştirme</div>
-          <div class="muted small">Sorular/feedback deneyimlerine göre uyarlanır. Hedef rol her zaman önceliklidir.</div>
+          <div class="muted small">Sorular ve feedback deneyimlerine göre uyarlanır. Hedef rol her zaman önceliklidir.</div>
         </div>
         <div class="miniCard">
           <div class="miniTitle">Ses → yazı</div>
@@ -47,7 +68,17 @@
     </section>
 
     <section id="pricing" class="card">
-      <h2>Fiyatlandırma</h2>
+      <div class="sectionHead">
+        <div>
+          <h2>Fiyatlandırma</h2>
+          <div class="muted small">Ürün ve fiyat bilgisi görünür olsun diye ana sayfada sabit gösterilir.</div>
+        </div>
+        <div class="paymentBadges" aria-label="Ödeme logoları">
+          <span class="paymentBadge iyzico">iyzico ile Öde</span>
+          <span class="paymentBadge visa">VISA</span>
+          <span class="paymentBadge mastercard">Mastercard</span>
+        </div>
+      </div>
       <div class="grid2">
         <div class="priceCard">
           <div class="priceTitle">Ücretsiz</div>
@@ -59,37 +90,95 @@
           </ul>
           <a class="primary linkBtn" href="/app">Başla</a>
         </div>
-        <div class="priceCard">
-          <div class="priceTitle">Pro</div>
-          <div class="priceValue">—</div>
+        <div class="priceCard featuredPriceCard">
+          <div class="priceTitle" data-pro-title>Pro</div>
+          <div class="priceValue" id="priceValue" data-pro-price>199 ₺</div>
           <ul class="list">
             <li>Sınırsız değerlendirme</li>
             <li>OCR ile taranmış PDF okuma</li>
             <li>Yoğun kullanım için daha yüksek limit</li>
+            <li>Ödeme sonrası Pro anahtarı kurtarma akışı</li>
           </ul>
           <button id="buyBtn" class="primary" disabled>Yakında</button>
           <div id="buyHint" class="muted small" style="margin-top:8px">Ödemeler yakında aktif olacak.</div>
         </div>
       </div>
       <div class="hint small" style="margin-top:10px">
-        Not: Bu bir eğitim aracıdır; özellikle klinik içerik gerçek klinik karar yerine geçmez.
+        Not: Dijital erişim ürünüdür. Detaylar için <a href="/refund">İade ve cayma koşulları</a>, <a href="/terms">kullanım şartları</a> ve <a href="/privacy">gizlilik politikası</a> sayfalarına bakabilirsin.
       </div>
     </section>
 
     <section class="card">
-      <h2>Gizlilik</h2>
+      <div class="sectionHead">
+        <div>
+          <h2>Hakkımızda</h2>
+          <div class="muted small">iyzico başvurusunda istenen görünür kurumsal bilgi bölümü</div>
+        </div>
+        <a class="ghost linkBtn" href="/about">Tam sayfa</a>
+      </div>
+      <p class="muted" data-about-short>
+        Sanal Mülakatım, adayların iş görüşmelerine yapılandırılmış pratik yaparak hazırlanmasına yardımcı olan dijital bir eğitim aracıdır.
+      </p>
+    </section>
+
+    <section id="contactBlock" class="card">
+      <div class="sectionHead">
+        <div>
+          <h2>İletişim</h2>
+          <div class="muted small">Ana sayfadan doğrudan erişilebilir şirket ve iletişim bilgileri</div>
+        </div>
+        <a class="ghost linkBtn" href="/contact">Detaylı iletişim</a>
+      </div>
+
+      <div class="grid2 infoGrid">
+        <div class="infoCard">
+          <div class="infoTitle">Şirket / işletme bilgileri</div>
+          <div class="kvList">
+            <div><span class="k">Ticari unvan</span><span class="v" data-company-legal-name>Render env'den doldurulacak</span></div>
+            <div><span class="k">İşletme adı</span><span class="v" data-company-trade-name>Render env'den doldurulacak</span></div>
+            <div><span class="k">MERSİS / Vergi No</span><span class="v"><span data-company-mersis-number>—</span> / <span data-company-tax-number>—</span></span></div>
+            <div><span class="k">Merkez adres</span><span class="v" data-company-address>Render env'den doldurulacak</span></div>
+          </div>
+        </div>
+
+        <div class="infoCard">
+          <div class="infoTitle">İletişim kanalları</div>
+          <div class="kvList">
+            <div><span class="k">E-posta</span><span class="v"><a data-support-email href="mailto:semi.ozgen@sanalmulakatim.com">semi.ozgen@sanalmulakatim.com</a></span></div>
+            <div><span class="k">Telefon</span><span class="v"><a data-company-phone href="tel:+90">Belirtilecek</a></span></div>
+            <div><span class="k">KEP</span><span class="v" data-company-kep-address>Belirtilecek</span></div>
+            <div><span class="k">Meslek odası</span><span class="v" data-company-chamber>Belirtilecek</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+      <div class="kvList singleColumn">
+        <div><span class="k">Meslek kuralları / bilgilendirme bağlantısı</span><span class="v"><a data-company-rules-url href="#" rel="noopener noreferrer" target="_blank">Belirtilecek</a></span></div>
+        <div><span class="k">Destek notu</span><span class="v">Ödeme, Pro anahtarı, veri silme ve teknik destek için yukarıdaki iletişim bilgilerini kullanabilirsin.</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Gizlilik ve kullanım</h2>
       <p class="muted">
-        Ses kaydını saklamıyoruz; sadece yazıya çevirme için işliyoruz. CV/cevaplar oturum boyunca kullanılır.
-        Detaylar için <a href="/privacy">Gizlilik Politikası</a> ve <a href="/terms">Kullanım Şartları</a>.
+        Ses kaydını saklamıyoruz; yalnızca yazıya çevirme için işliyoruz. CV ve cevaplar oturum ve destek süreçlerinde gerekli olduğu ölçüde kullanılır.
+        Detaylar için <a href="/privacy">Gizlilik Politikası</a>, <a href="/terms">Kullanım Şartları</a> ve <a href="/refund">İade / Cayma</a> sayfalarına bak.
       </p>
     </section>
 
     <footer class="footer muted small">
-      <span>© Sanal Mülakatım</span>
+      <span>© <span data-app-name>Sanal Mülakatım</span></span>
+      <span class="dot">•</span>
+      <a href="/about">Hakkımızda</a>
+      <span class="dot">•</span>
+      <a href="/contact">İletişim</a>
       <span class="dot">•</span>
       <a href="/privacy">Gizlilik</a>
       <span class="dot">•</span>
       <a href="/terms">Şartlar</a>
+      <span class="dot">•</span>
+      <a href="/refund">İade</a>
       <span class="dot">•</span>
       <a href="/app">Uygulama</a>
       <span class="dot">•</span>
@@ -99,6 +188,7 @@
     </footer>
   </main>
 
+  <script src="/static/public_config.js"></script>
   <script src="/static/landing.js"></script>
 </body>
 </html>

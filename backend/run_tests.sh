@@ -11,4 +11,5 @@ if [ ! -d ".venv" ]; then
   exit 1
 fi
 
-./.venv/bin/python -m pytest -q
+mkdir -p .tmp .pytest_tmp
+TMPDIR="$(pwd)/.tmp" ./.venv/bin/python -m pytest -q -p no:asyncio --basetemp="$(pwd)/.pytest_tmp"

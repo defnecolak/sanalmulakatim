@@ -11,10 +11,11 @@
     <div class="wrap">
       <div class="brand">
         <h1>İletişim</h1>
-        <div class="tagline"><span data-app-name>Sanal Mülakatım</span> • Destek</div>
+        <div class="tagline"><span data-app-name>Sanal Mülakatım</span> • Destek ve kurumsal iletişim</div>
       </div>
       <div class="row">
         <a class="ghost linkBtn" href="/">← Ana Sayfa</a>
+        <a class="ghost linkBtn" href="/about">Hakkımızda</a>
         <a class="ghost linkBtn" href="/app">Uygulama</a>
       </div>
     </div>
@@ -22,28 +23,50 @@
 
   <main class="wrap">
     <section class="card">
-      <h2>Destek e-postası</h2>
-      <p class="muted">
-        Sorun bildirimi, ödeme/anahtar yardımı, veri silme talepleri ve genel sorular için:
-      </p>
-      <p style="margin:10px 0">
-        <a data-support-email class="primary linkBtn" href="mailto:semi.ozgen@sanalmulakatim.com">semi.ozgen@sanalmulakatim.com</a>
-      </p>
+      <div class="sectionHead">
+        <div>
+          <h2>İletişim kanalları</h2>
+          <div class="muted small">Destek, ödeme ve resmi yazışmalar için kullanılacak bilgiler</div>
+        </div>
+      </div>
+
+      <div class="grid2 infoGrid">
+        <div class="infoCard">
+          <div class="infoTitle">Destek</div>
+          <div class="kvList">
+            <div><span class="k">E-posta</span><span class="v"><a data-support-email class="primary linkBtn inlineLinkBtn" href="mailto:semi.ozgen@sanalmulakatim.com">semi.ozgen@sanalmulakatim.com</a></span></div>
+            <div><span class="k">Telefon</span><span class="v"><a data-company-phone href="tel:+90">Belirtilecek</a></span></div>
+            <div><span class="k">KEP</span><span class="v" data-company-kep-address>Belirtilecek</span></div>
+          </div>
+        </div>
+        <div class="infoCard">
+          <div class="infoTitle">Şirket / işletme</div>
+          <div class="kvList">
+            <div><span class="k">Ticari unvan</span><span class="v" data-company-legal-name>Belirtilecek</span></div>
+            <div><span class="k">İşletme adı</span><span class="v" data-company-trade-name>Belirtilecek</span></div>
+            <div><span class="k">Merkez adres</span><span class="v" data-company-address>Belirtilecek</span></div>
+            <div><span class="k">MERSİS / Vergi No</span><span class="v"><span data-company-mersis-number>—</span> / <span data-company-tax-number>—</span></span></div>
+          </div>
+        </div>
+      </div>
+
       <div class="divider"></div>
 
       <h2>Hızlı ipucu</h2>
       <ul class="list">
-        <li>Hata varsa ekran görüntüsü + tarayıcı/işletim sistemi bilgisini ekle.</li>
-        <li>“Pro anahtarı e-posta ile gelmedi” ise, <b>/success</b> sayfasındaki “E-postama gönder” ile tekrar yollayabilirsin.</li>
+        <li>Hata bildirirken ekran görüntüsü ve tarayıcı / işletim sistemi bilgisini ekle.</li>
+        <li>“Pro anahtarı e-posta ile gelmedi” durumunda, <b>/success</b> sayfasındaki “E-postama gönder” aksiyonunu tekrar kullanabilirsin.</li>
+        <li>Resmi başvuru için meslek odası ve meslek kuralları bilgisini de doldur: <a data-company-rules-url href="#" rel="noopener noreferrer" target="_blank">bağlantı</a>.</li>
       </ul>
 
       <p class="muted small">
-        Bu sayfa bilgilendirme amaçlıdır; resmi yazışmalar için lütfen e-posta kullanın.
+        Bu sayfa bilgilendirme amaçlıdır; resmi yazışmalar için lütfen e-posta veya KEP bilgisini kullanın.
       </p>
     </section>
 
     <footer class="footer muted small">
       <a href="/">Ana Sayfa</a><span class="dot">•</span>
+      <a href="/about">Hakkımızda</a><span class="dot">•</span>
       <a href="/privacy">Gizlilik</a><span class="dot">•</span>
       <a href="/terms">Şartlar</a><span class="dot">•</span>
       <a href="/refund">İade</a><span class="dot">•</span>

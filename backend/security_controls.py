@@ -280,6 +280,7 @@ class PostgresBanDB:
         self.url = url
         self._lock = threading.Lock()
         self._conn = psycopg.connect(self.url, connect_timeout=8, row_factory=dict_row)
+        self._closed = False
         self._init_db()
 
     def _init_db(self) -> None:
@@ -327,6 +328,17 @@ class PostgresBanDB:
                 )
             self._conn.commit()
 
+    def close(self) -> None:
+        if getattr(self, "_closed", False):
+            return
+        try:
+            with self._lock:
+                self._conn.close()
+        except Exception:
+            pass
+        finally:
+            self._closed = True
+
 
 class BanDB:
     """Facade: chooses SQLite vs Postgres based on env."""
@@ -344,6 +356,11 @@ class BanDB:
 
     def __getattr__(self, name: str):
         return getattr(self._impl, name)
+
+    def close(self) -> None:
+        close_fn = getattr(self._impl, "close", None)
+        if callable(close_fn):
+            close_fn()
 
 
 class StrikeTracker:
@@ -897,6 +914,7 @@ class PostgresSecurityEventDB:
         self.retention_days = max(1, int(retention_days))
         self._lock = threading.Lock()
         self._conn = psycopg.connect(self.url, connect_timeout=8, row_factory=dict_row)
+        self._closed = False
         self._init_db()
         self.prune()
 
@@ -1100,6 +1118,17 @@ class PostgresSecurityEventDB:
                 cur.execute("DELETE FROM security_events WHERE ts < %s", (cutoff,))
             self._conn.commit()
 
+    def close(self) -> None:
+        if getattr(self, "_closed", False):
+            return
+        try:
+            with self._lock:
+                self._conn.close()
+        except Exception:
+            pass
+        finally:
+            self._closed = True
+
 
 class SecurityEventDB:
     """Facade: chooses SQLite vs Postgres based on env."""
@@ -1118,3 +1147,8 @@ class SecurityEventDB:
 
     def __getattr__(self, name: str):
         return getattr(self._impl, name)
+
+    def close(self) -> None:
+        close_fn = getattr(self._impl, "close", None)
+        if callable(close_fn):
+            close_fn()

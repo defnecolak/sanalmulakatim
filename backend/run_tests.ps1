@@ -1,4 +1,3 @@
-\
 # Run unit tests (PowerShell)
 cd $PSScriptRoot
 if (!(Test-Path .\.venv)) {
@@ -9,4 +8,12 @@ if (!(Test-Path .\.venv)) {
   exit 1
 }
 
-.\.venv\Scripts\python.exe -m pytest -q
+$projectTmp = Join-Path $PSScriptRoot ".tmp"
+$pytestTmp = Join-Path $PSScriptRoot ".pytest_tmp"
+New-Item -ItemType Directory -Force $projectTmp | Out-Null
+New-Item -ItemType Directory -Force $pytestTmp | Out-Null
+
+$env:TMP = $projectTmp
+$env:TEMP = $projectTmp
+
+.\.venv\Scripts\python.exe -m pytest -q -p no:asyncio --basetemp=$pytestTmp

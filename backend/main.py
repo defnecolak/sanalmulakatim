@@ -17,12 +17,14 @@ import threading
 import time
 import uuid
 import smtplib
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from email.utils import formataddr
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from urllib.parse import urlparse, quote
+from html import escape
 
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -36,7 +38,11 @@ try:
     import fitz  # type: ignore  # PyMuPDF
 except Exception:  # pragma: no cover
     fitz = None
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover
+    def load_dotenv(*args, **kwargs):
+        return False
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, Response
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -53,7 +59,10 @@ except Exception:  # pragma: no cover
     psycopg = None  # type: ignore
     dict_row = None  # type: ignore
 from pydantic import BaseModel, Field
-from pypdf import PdfReader
+try:
+    from pypdf import PdfReader
+except Exception:  # pragma: no cover
+    PdfReader = None  # type: ignore
 import requests  # type: ignore
 
 # Extra security controls (WAF + ban list)
@@ -568,6 +577,7 @@ class SQLiteUsageDB:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._closed = False
         self._init()
 
     def _init(self) -> None:
@@ -1195,6 +1205,17 @@ class SQLiteUsageDB:
             # Keep email_token_links (hashed) unless user requests deletion
             self._conn.commit()
 
+    def close(self) -> None:
+        if getattr(self, "_closed", False):
+            return
+        try:
+            with self._lock:
+                self._conn.close()
+        except Exception:
+            pass
+        finally:
+            self._closed = True
+
 class PostgresUsageDB:
     """Postgres-backed implementation of the UsageDB API."""
 
@@ -1204,6 +1225,7 @@ class PostgresUsageDB:
         self.url = url
         self._lock = threading.Lock()
         self._conn = psycopg.connect(self.url, connect_timeout=8, row_factory=dict_row)
+        self._closed = False
         self._init()
 
     def _init(self) -> None:
@@ -1778,6 +1800,17 @@ class PostgresUsageDB:
                 cur.execute("DELETE FROM delete_links WHERE expires_at < %s", (now,))
             self._conn.commit()
 
+    def close(self) -> None:
+        if getattr(self, "_closed", False):
+            return
+        try:
+            with self._lock:
+                self._conn.close()
+        except Exception:
+            pass
+        finally:
+            self._closed = True
+
 
 class UsageDB:
     """Facade that chooses SQLite vs Postgres based on env."""
@@ -1792,6 +1825,11 @@ class UsageDB:
 
     def __getattr__(self, name: str):
         return getattr(self._impl, name)
+
+    def close(self) -> None:
+        close_fn = getattr(self._impl, "close", None)
+        if callable(close_fn):
+            close_fn()
 
 
 usage_db = UsageDB(DB_PATH)
@@ -2969,6 +3007,18 @@ async def _startup_cleanup() -> None:
     except Exception as e:
         logger.warning(f"Retention cleanup failed: {type(e).__name__}: {e}")
 
+
+@app.on_event("shutdown")
+async def _shutdown_cleanup() -> None:
+    """Release persistent DB handles so Windows test cleanup can delete temp DB files."""
+    for obj in (globals().get("usage_db"), globals().get("ban_db"), globals().get("security_events")):
+        try:
+            close_fn = getattr(obj, "close", None)
+            if callable(close_fn):
+                close_fn()
+        except Exception:
+            pass
+
 def _origin_allowed(origin: str) -> bool:
     o = (origin or "").strip().rstrip("/")
     return (not o) or (o in ALLOWED_ORIGINS)
@@ -3200,7 +3250,11 @@ async def add_request_id_and_security(request: Request, call_next):
                 return resp
 
     # 3) Origin guard (optional)
-    if ORIGIN_GUARD_ENABLED and request.url.path.startswith("/api/"):
+    # Admin API is intentionally exempt here because it already sits behind stronger controls
+    # (admin key, optional 2FA/TOTP, optional edge token, optional IP allowlist / Basic Auth)
+    # and is commonly served from a separate local-only admin origin like 127.0.0.1:8081.
+    is_admin_api = request.url.path.startswith("/api/admin/")
+    if ORIGIN_GUARD_ENABLED and request.url.path.startswith("/api/") and not is_admin_api:
         origin = request.headers.get("origin")
         if origin and origin not in ALLOWED_ORIGINS:
             resp = JSONResponse(
@@ -3213,7 +3267,9 @@ async def add_request_id_and_security(request: Request, call_next):
     # 3.1) Sec-Fetch-Site guard (defence-in-depth):
     # Modern browsers send Sec-Fetch-Site for fetch/form requests. If we see a cross-site POST to /api,
     # we block it to reduce CSRF/drive-by abuse even when Origin is missing/misleading.
-    if ORIGIN_GUARD_ENABLED and request.url.path.startswith("/api/") and request.method in ("POST", "PUT", "PATCH", "DELETE"):
+    # Admin API uses stronger explicit auth headers and may run on a separate local-only admin origin,
+    # so we skip this generic browser-origin guard for /api/admin/*.
+    if ORIGIN_GUARD_ENABLED and request.url.path.startswith("/api/") and not is_admin_api and request.method in ("POST", "PUT", "PATCH", "DELETE"):
         sfs = (request.headers.get("sec-fetch-site") or "").strip().lower()
         if sfs and sfs not in ("same-origin", "same-site"):
             resp = JSONResponse(
@@ -3303,10 +3359,9 @@ def landing():
 @app.get("/.well-known/security.txt")
 def security_txt():
     # Public security contact (RFC 9116 style). Keep it short.
-    body = """Contact: mailto:semi.ozgen@sanalmulakatim.com
-Preferred-Languages: tr,en
-Policy: https://sanalmulakatim.com/privacy
-"""
+    contact = _env_str("SUPPORT_EMAIL", "semi.ozgen@sanalmulakatim.com")
+    policy = f"{PUBLIC_BASE_URL}/privacy" if PUBLIC_BASE_URL else "https://sanalmulakatim.com/privacy"
+    body = f"Contact: mailto:{contact}\nPreferred-Languages: tr,en\nPolicy: {policy}\n"
     return Response(content=body, media_type="text/plain")
 
 @app.get("/robots.txt")
@@ -3334,6 +3389,10 @@ def refund_page():
 @app.get("/contact")
 def contact_page():
     return FileResponse(os.path.join(STATIC_DIR, "contact.html"))
+
+@app.get("/about")
+def about_page():
+    return FileResponse(os.path.join(STATIC_DIR, "about.html"))
 
 @app.get("/recover")
 def recover_page():
@@ -3399,10 +3458,25 @@ def public_config():
         "support_email": (_env_str("SUPPORT_EMAIL") or "semi.ozgen@sanalmulakatim.com"),
         "public_base_url": (_env_str("PUBLIC_BASE_URL") or "http://localhost:5555").rstrip("/"),
         "payment_provider": provider,
+        "pro_price_try": round(float(_env_float("PRO_PRICE_TRY", 199.0)), 2),
+        "pro_title": (_env_str("PRO_TITLE") or "Pro Erişim"),
         "smtp_configured": _smtp_enabled(),
         "stripe_configured": _stripe_enabled(),
         "iyzico_configured": _iyzico_enabled(),
         "data_retention_days": int(retention_days),
+        "company": {
+            "legal_name": _env_str("BUSINESS_LEGAL_NAME"),
+            "trade_name": _env_str("BUSINESS_TRADE_NAME"),
+            "mersis_number": _env_str("BUSINESS_MERSIS_NUMBER"),
+            "tax_number": _env_str("BUSINESS_TAX_NUMBER"),
+            "address": _env_str("BUSINESS_ADDRESS"),
+            "kep_address": _env_str("BUSINESS_KEP_ADDRESS"),
+            "phone": _env_str("BUSINESS_PHONE"),
+            "chamber": _env_str("BUSINESS_CHAMBER"),
+            "profession_rules_url": _env_str("BUSINESS_PROFESSION_RULES_URL"),
+            "about_short": _env_str("ABOUT_SHORT"),
+            "about_long": _env_str("ABOUT_LONG"),
+        },
         "captcha": {
             "enabled": bool(_captcha_enabled()),
             "provider": (CAPTCHA_PROVIDER if _captcha_enabled() else ""),
@@ -3844,20 +3918,21 @@ async def parse_pdf(file: UploadFile = File(...), language: str = "tr", ctx: Cli
 
     # 1) pypdf
     text_parts: List[str] = []
-    try:
-        reader = PdfReader(io.BytesIO(pdf_bytes))
-        if getattr(reader, "is_encrypted", False):
-            raise HTTPException(status_code=400, detail="PDF şifreli/encrypted görünüyor. Şifresiz PDF yükle.")
-        for i, page in enumerate(reader.pages):
-            if max_pages and i >= max_pages:
-                break
-            t = page.extract_text() or ""
-            if t.strip():
-                text_parts.append(t)
-    except HTTPException:
-        raise
-    except Exception:
-        pass
+    if PdfReader is not None:
+        try:
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            if getattr(reader, "is_encrypted", False):
+                raise HTTPException(status_code=400, detail="PDF şifreli/encrypted görünüyor. Şifresiz PDF yükle.")
+            for i, page in enumerate(reader.pages):
+                if max_pages and i >= max_pages:
+                    break
+                t = page.extract_text() or ""
+                if t.strip():
+                    text_parts.append(t)
+        except HTTPException:
+            raise
+        except Exception:
+            pass
 
     text = _clean_text("\n".join(text_parts))
     if text:
@@ -3958,6 +4033,58 @@ def _iyzico_make_headers(uri_path: str, body_json: str, random_key: str | None =
         "x-iyzi-rnd": rk,
         "Content-Type": "application/json",
     }
+
+
+_IYZICO_CF_INIT_SIGNATURE_ORDER = ["conversationId", "token"]
+_IYZICO_CF_RETRIEVE_SIGNATURE_ORDER = [
+    "paymentStatus",
+    "paymentId",
+    "currency",
+    "basketId",
+    "conversationId",
+    "paidPrice",
+    "price",
+    "token",
+]
+
+
+def _iyzico_normalize_signature_value(name: str, value: Any) -> str:
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if not s:
+        return ""
+    if name not in {"price", "paidPrice"}:
+        return s
+    try:
+        d = Decimal(s)
+    except (InvalidOperation, ValueError):
+        return s
+    normalized = format(d.normalize(), "f")
+    if "." in normalized:
+        normalized = normalized.rstrip("0").rstrip(".")
+    return normalized or "0"
+
+
+def _iyzico_build_response_signature(payload: Dict[str, Any], ordered_fields: List[str]) -> str:
+    secret_key = _env_str("IYZICO_SECRET_KEY")
+    if not secret_key:
+        return ""
+    plain = ":".join(_iyzico_normalize_signature_value(field, payload.get(field)) for field in ordered_fields)
+    return hmac.new(secret_key.encode("utf-8"), plain.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _iyzico_signature_valid(payload: Dict[str, Any], ordered_fields: List[str]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    signature = str(payload.get("signature") or "").strip().lower()
+    if not signature:
+        return False
+    expected = _iyzico_build_response_signature(payload, ordered_fields).lower()
+    if not expected:
+        return False
+    return hmac.compare_digest(signature, expected)
+
 
 def _iyzico_post(uri_path: str, body: Dict[str, Any]) -> Dict[str, Any]:
     base_url = (_env_str("IYZICO_BASE_URL") or "https://sandbox-api.iyzipay.com").rstrip("/")
@@ -4131,6 +4258,8 @@ async def create_checkout(request: Request, ctx: ClientCtx = Depends(get_client_
         uri = "/payment/iyzipos/checkoutform/initialize/auth/ecom"
         j = _iyzico_post(uri, init_payload)
         j = _iyzico_expect_success(j)
+        if _env_bool("IYZICO_VALIDATE_SIGNATURE", True) and not _iyzico_signature_valid(j, _IYZICO_CF_INIT_SIGNATURE_ORDER):
+            raise HTTPException(status_code=502, detail="iyzico initialize signature doğrulaması başarısız.")
 
         pay_url = (j.get("paymentPageUrl") or "").strip()
         if not pay_url:
@@ -4261,9 +4390,25 @@ async def iyzico_callback(request: Request, order_id: str):
 
     status = (resp.get("status") or "").lower() if isinstance(resp, dict) else ""
     pay_status = (resp.get("paymentStatus") or "").upper() if isinstance(resp, dict) else ""
+    payment_id = str(resp.get("paymentId") or resp.get("payment_id") or "").strip() if isinstance(resp, dict) else ""
+    fraud_status = str(resp.get("fraudStatus") or "").strip() if isinstance(resp, dict) else ""
 
-    if status == "success" and pay_status == "SUCCESS":
-        usage_db.update_payment_order(order_id, status="VERIFIED_SUCCESS", last_error=None)
+    if _env_bool("IYZICO_VALIDATE_SIGNATURE", True) and not _iyzico_signature_valid(resp, _IYZICO_CF_RETRIEVE_SIGNATURE_ORDER):
+        logger.warning(f"iyzico SIGNATURE_FAIL: order={order_id}")
+        usage_db.update_payment_order(order_id, status="VERIFY_ERROR", provider_payment_id=(payment_id or None), last_error="SIGNATURE_VALIDATION_FAILED")
+        return HTMLResponse(
+            """<!doctype html><html><head><meta charset='utf-8'>
+<meta http-equiv='refresh' content='0;url=/cancel'>
+<title>Ödeme Doğrulanamadı</title></head><body>
+<h1>Ödeme doğrulanamadı</h1>
+<p>Ödeme cevabının imzası doğrulanamadı. Lütfen tekrar dene veya destekle iletişime geç.</p>
+<p><a href='/cancel'>İptal sayfasına git</a></p>
+</body></html>""",
+            status_code=200,
+        )
+
+    if status == "success" and pay_status == "SUCCESS" and fraud_status == "1":
+        usage_db.update_payment_order(order_id, status="VERIFIED_SUCCESS", provider_payment_id=(payment_id or None), last_error=None)
 
         order = usage_db.get_payment_order(order_id)
         client_id = order.get("client_id") if isinstance(order, dict) else None
@@ -4271,10 +4416,6 @@ async def iyzico_callback(request: Request, order_id: str):
         pro_token = "pro_" + uuid.uuid4().hex[:20]
         usage_db.add_pro_token(token=pro_token, client_id=client_id, provider="iyzico", provider_ref=order_id)
 
-        # Record final state (idempotency/support)
-        payment_id = ""
-        if isinstance(resp, dict):
-            payment_id = str(resp.get("paymentId") or resp.get("payment_id") or "").strip()
         usage_db.update_payment_order(
             order_id,
             status="TOKEN_ISSUED",
@@ -4299,21 +4440,29 @@ async def iyzico_callback(request: Request, order_id: str):
             status_code=200,
         )
 
-    # Failure
     err = ""
+    order_status = "VERIFIED_FAIL"
     if isinstance(resp, dict):
         err = (resp.get("errorMessage") or resp.get("errorCode") or resp.get("paymentStatus") or "").strip()
 
-    logger.warning(f"iyzico FAIL: order={order_id} status={status} paymentStatus={pay_status} err={err}")
+    if status == "success" and pay_status == "SUCCESS" and fraud_status == "0":
+        order_status = "VERIFIED_REVIEW"
+        err = "Ödeme alındı ancak iyzico sahtecilik kontrolü hâlâ incelemede. Pro erişim henüz açılmadı."
+    elif status == "success" and pay_status == "SUCCESS" and fraud_status == "-1":
+        order_status = "VERIFIED_FRAUD_REJECT"
+        err = "Ödeme, iyzico sahtecilik kontrolünde reddedildi."
 
-    usage_db.update_payment_order(order_id, status="VERIFIED_FAIL", last_error=(err or None))
+    logger.warning(f"iyzico FAIL: order={order_id} status={status} paymentStatus={pay_status} fraudStatus={fraud_status} err={err}")
 
+    usage_db.update_payment_order(order_id, status=order_status, provider_payment_id=(payment_id or None), last_error=(err or None))
+
+    safe_err = escape(err or "Lütfen tekrar dene.")
     return HTMLResponse(
         f"""<!doctype html><html><head><meta charset='utf-8'>
 <meta http-equiv='refresh' content='0;url=/cancel'>
 <title>Ödeme Başarısız</title></head><body>
 <h1>Ödeme tamamlanamadı</h1>
-<p>{err or 'Lütfen tekrar dene.'}</p>
+<p>{safe_err}</p>
 <p><a href='/'>Ana sayfaya dön</a></p>
 </body></html>""",
         status_code=200,

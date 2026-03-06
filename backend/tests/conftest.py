@@ -1,3 +1,4 @@
+import gc
 import importlib
 import os
 import sys
@@ -8,8 +9,25 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+def _close_main_module() -> None:
+    mod = sys.modules.get("main")
+    if mod is not None:
+        for attr in ("usage_db", "ban_db", "security_events"):
+            obj = getattr(mod, attr, None)
+            close_fn = getattr(obj, "close", None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                except Exception:
+                    pass
+        sys.modules.pop("main", None)
+    gc.collect()
+
+
 @pytest.fixture()
 def app_module(tmp_path, monkeypatch):
+    _close_main_module()
+
     # Minimal env to boot the app in a test-safe way
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")
@@ -29,11 +47,19 @@ def app_module(tmp_path, monkeypatch):
     # iyzico requires https callback base (docs). Use a dummy https domain.
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.com")
 
-    import main  # noqa: F401
-    importlib.reload(main)
-    return main
+    # The repo ships with a local-dev .env. Force test-safe host/origin settings so
+    # TrustedHost / Origin guard don't accidentally reject TestClient requests.
+    monkeypatch.setenv("ALLOWED_HOSTS", "testserver,localhost,127.0.0.1")
+    monkeypatch.setenv("ALLOWED_ORIGINS", "https://example.com,http://testserver")
+
+    main = importlib.import_module("main")
+    try:
+        yield main
+    finally:
+        _close_main_module()
 
 
 @pytest.fixture()
 def client(app_module):
-    return TestClient(app_module.app)
+    with TestClient(app_module.app) as c:
+        yield c
