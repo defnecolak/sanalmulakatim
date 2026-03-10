@@ -4187,8 +4187,10 @@ async def create_checkout(request: Request, ctx: ClientCtx = Depends(get_client_
         order_id = "ord_" + uuid.uuid4().hex[:24]
         usage_db.create_payment_order(order_id=order_id, provider="iyzico", client_id=ctx.client_id, email=email or None)
 
-        amount = float(_env_float("PRO_PRICE_TRY", 199.0))
-        amount = round(amount, 2)
+        amount_raw = float(_env_float("PRO_PRICE_TRY", 199.0))
+        amount_raw = round(amount_raw, 2)
+        # iyzico API requires price fields as decimal strings (e.g. "199.00"), NOT numbers.
+        amount_str = f"{amount_raw:.2f}"
         title = (_env_str("PRO_TITLE") or "Pro Erişim").strip() or "Pro Erişim"
 
         callback_url = f"{base_url}/api/billing/iyzico/callback?order_id={order_id}"
@@ -4210,8 +4212,8 @@ async def create_checkout(request: Request, ctx: ClientCtx = Depends(get_client_
         init_payload: Dict[str, Any] = {
             "locale": "tr",
             "conversationId": order_id,
-            "price": amount,
-            "paidPrice": amount,
+            "price": amount_str,
+            "paidPrice": amount_str,
             "currency": "TRY",
             "basketId": order_id,
             "paymentGroup": "PRODUCT",
@@ -4250,24 +4252,39 @@ async def create_checkout(request: Request, ctx: ClientCtx = Depends(get_client_
                     "name": title,
                     "category1": "Digital",
                     "itemType": "VIRTUAL",
-                    "price": amount,
+                    "price": amount_str,
                 }
             ],
         }
 
         uri = "/payment/iyzipos/checkoutform/initialize/auth/ecom"
-        j = _iyzico_post(uri, init_payload)
-        j = _iyzico_expect_success(j)
+        try:
+            j = _iyzico_post(uri, init_payload)
+            j = _iyzico_expect_success(j)
+        except HTTPException as exc:
+            # Update order so admin can debug later
+            try:
+                usage_db.update_payment_order(order_id, status="INIT_FAILED", last_error=str(exc.detail)[:500])
+            except Exception:
+                pass
+            raise
         if _env_bool("IYZICO_VALIDATE_SIGNATURE", True) and not _iyzico_signature_valid(j, _IYZICO_CF_INIT_SIGNATURE_ORDER):
+            try:
+                usage_db.update_payment_order(order_id, status="INIT_SIGNATURE_FAIL", last_error="initialize signature doğrulaması başarısız")
+            except Exception:
+                pass
             raise HTTPException(status_code=502, detail="iyzico initialize signature doğrulaması başarısız.")
 
         pay_url = (j.get("paymentPageUrl") or "").strip()
         if not pay_url:
-            # Fallback: some responses might not include paymentPageUrl
+            # Fallback: build URL from token when paymentPageUrl is missing
             token = (j.get("token") or "").strip()
             if token:
-                # Known sandbox URL pattern from docs
-                pay_url = f"https://sandbox-cpp.iyzipay.com?token={token}&lang=tr"
+                iyzico_base = (_env_str("IYZICO_BASE_URL") or "https://sandbox-api.iyzipay.com").strip().lower()
+                if "sandbox" in iyzico_base:
+                    pay_url = f"https://sandbox-cpp.iyzipay.com?token={token}&lang=tr"
+                else:
+                    pay_url = f"https://cpp.iyzipay.com?token={token}&lang=tr"
 
         if not pay_url:
             raise HTTPException(status_code=502, detail=f"iyzico paymentPageUrl alınamadı: {j}")
@@ -4329,6 +4346,11 @@ async def iyzico_callback(request: Request, order_id: str):
     order_id = (order_id or "").strip()
     if not order_id:
         return HTMLResponse("<h1>order_id eksik.</h1>", status_code=400)
+    # Validate order_id format to prevent injection (expected: ord_<hex>)
+    if not re.match(r"^ord_[a-f0-9]{1,32}$", order_id):
+        return HTMLResponse("<h1>Geçersiz order_id formatı.</h1>", status_code=400)
+    # Escape for safe use in HTML responses
+    safe_order_id = escape(order_id)
 
     token = ""
     if request.method == "GET":
@@ -4370,9 +4392,9 @@ async def iyzico_callback(request: Request, order_id: str):
         usage_db.update_payment_order(order_id, status="TOKEN_ISSUED")
         return HTMLResponse(
             f"""<!doctype html><html><head><meta charset='utf-8'>
-<meta http-equiv='refresh' content='0;url=/success?provider=iyzico&ref={order_id}'>
+<meta http-equiv='refresh' content='0;url=/success?provider=iyzico&ref={safe_order_id}'>
 <title>Yönlendiriliyor</title></head><body>
-<p>Yönlendiriliyor… <a href='/success?provider=iyzico&ref={order_id}'>Devam</a></p>
+<p>Yönlendiriliyor… <a href='/success?provider=iyzico&ref={safe_order_id}'>Devam</a></p>
 </body></html>""",
             status_code=200,
         )
@@ -4380,7 +4402,21 @@ async def iyzico_callback(request: Request, order_id: str):
     # Verify payment result with CF-Retrieve
     uri = "/payment/iyzipos/checkoutform/auth/ecom/detail"
     retrieve_payload: Dict[str, Any] = {"locale": "tr", "conversationId": order_id, "token": token}
-    resp = _iyzico_post(uri, retrieve_payload)
+    try:
+        resp = _iyzico_post(uri, retrieve_payload)
+    except HTTPException as exc:
+        logger.warning(f"iyzico RETRIEVE_FAIL: order={order_id} err={exc.detail}")
+        usage_db.update_payment_order(order_id, status="RETRIEVE_FAILED", last_error=str(exc.detail)[:500])
+        return HTMLResponse(
+            f"""<!doctype html><html><head><meta charset='utf-8'>
+<meta http-equiv='refresh' content='3;url=/cancel'>
+<title>Ödeme Doğrulanamadı</title></head><body>
+<h1>Ödeme doğrulanamadı</h1>
+<p>iyzico sunucusundan cevap alınamadı. Lütfen birkaç dakika bekleyip tekrar dene.</p>
+<p><a href='/cancel'>İptal sayfasına git</a></p>
+</body></html>""",
+            status_code=200,
+        )
 
     # Store raw response for support/debug (best-effort; avoid crashing if JSON has weird types)
     try:
@@ -4428,7 +4464,7 @@ async def iyzico_callback(request: Request, order_id: str):
         if isinstance(order, dict):
             emailed = _auto_email_token_best_effort(order.get("email"), pro_token, base_url=base_url)
 
-        success_url = f"/success?provider=iyzico&ref={order_id}" + ("&emailed=1" if emailed else "")
+        success_url = f"/success?provider=iyzico&ref={safe_order_id}" + ("&emailed=1" if emailed else "")
 
         return HTMLResponse(
             f"""<!doctype html><html><head><meta charset='utf-8'>
