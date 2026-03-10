@@ -45,6 +45,15 @@
 </select>
 </div>
 <div class="field">
+<label for="interviewType">Mülakat Türü</label>
+<select id="interviewType">
+<option value="mixed" selected>Karışık</option>
+<option value="behavioral">Davranışsal (STAR)</option>
+<option value="technical">Teknik</option>
+<option value="case">Vaka Analizi</option>
+</select>
+</div>
+<div class="field">
 <label for="nQuestions">Soru Sayısı (1–10)</label>
 <input id="nQuestions" max="10" min="1" type="number" value="3"/>
 </div>
@@ -70,6 +79,21 @@
 <div class="hint small">
           Pro anahtarı girersen günlük limitler kalkar. Pro almak için <a href="/#pricing">fiyatlandırmaya</a> bak.
         </div>
+</div>
+<div class="divider"></div>
+<details>
+<summary style="font-weight:700; cursor:pointer">Geçmiş</summary>
+<div class="historyList" id="historyList" style="margin-top:12px"></div>
+<button class="ghost" id="clearHistoryBtn" style="margin-top:12px">Geçmişi Temizle</button>
+</details>
+<div class="divider"></div>
+<div class="field">
+<label for="referralCode">Referans Kodu</label>
+<input id="referralCode" placeholder="Arkadaşının referans kodunu gir" type="text"/>
+<div class="hint small">Arkadaşın bu kodu girerse 5 ekstra değerlendirme hakkı kazanırsın.</div>
+</div>
+<div class="field">
+<div class="hint small"><b>Referans kodun:</b> <span id="myReferralCode">—</span> — Arkadaşını davet etmek için bunu paylaş!</div>
 </div>
 <div class="row">
 <button class="primary" id="startBtn">Mülakatı Başlat</button>
@@ -121,6 +145,7 @@
 <div class="row">
 <button class="primary" id="recStart">Kaydı Başlat</button>
 <button class="ghost" disabled="" id="recStop">Durdur</button>
+<span class="recTimer hidden" id="recTimer">00:00</span>
 </div>
 <div class="mini hidden" id="transcribeStatus"></div>
 <audio class="hidden" controls="" id="audioPlayback"></audio>
@@ -143,6 +168,10 @@
 <div class="hint small">
         Eğitim amaçlıdır; gerçek klinik karar yerine geçmez.
       </div>
+</section>
+<section class="card hidden" id="summaryCard">
+<h2>Mülakat Özeti</h2>
+<div id="summaryContent"></div>
 </section>
 <footer class="footer muted small">
       Lite sürüm: Dashboard / Paketler / Recruiter yok. • <a href="/">Ana Sayfa</a> • <a href="/about">Hakkımızda</a> • <a href="/privacy">Gizlilik</a> • <a href="/terms">Şartlar</a> • <a href="/refund">İade</a> • <a href="/contact">İletişim</a> • <a href="/recover">Pro Kurtarma</a> • <a href="/delete">Veri Silme</a>

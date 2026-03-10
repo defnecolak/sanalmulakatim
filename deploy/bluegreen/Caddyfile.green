@@ -42,7 +42,7 @@
         respond 404
     }
 
-    @admin path /admin/* /api/admin/*
+    @admin path /admin /admin/* /api/admin/*
     handle @admin {
         @allowed remote_ip {$ADMIN_ALLOW_IPS}
         handle @allowed {

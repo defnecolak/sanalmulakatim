@@ -2262,6 +2262,7 @@ class InterviewSession:
     n_questions: int
     created_at: float = field(default_factory=lambda: time.time())
     cv_text: str = ""
+    interview_type: str = "mixed"
     questions: List[Dict[str, Any]] = field(default_factory=list)
     answers: List[Dict[str, Any]] = field(default_factory=list)
     current_index: int = 0
@@ -2486,9 +2487,19 @@ def _seniority_guidance(seniority: str, language: str) -> str:
     )
 
 
-def _choose_desired_type(role: str, language: str, asked_count: int) -> str:
+def _choose_desired_type(role: str, language: str, asked_count: int, interview_type: str = "mixed") -> str:
+    tr = _is_tr(language)
+    # If user selected a specific interview type, force it
+    itype = (interview_type or "mixed").strip().lower()
+    if itype == "behavioral":
+        return "davranışsal" if tr else "behavioral"
+    elif itype == "technical":
+        return "teknik" if tr else "technical"
+    elif itype == "case":
+        return "vaka" if tr else "case"
+    # Default: mixed — use role-based cycle
     prof = _role_profile(role)
-    cycle = prof["type_cycle_tr"] if _is_tr(language) else prof["type_cycle_en"]
+    cycle = prof["type_cycle_tr"] if tr else prof["type_cycle_en"]
     return cycle[asked_count % len(cycle)]
 
 def _fill_followups(role: str, q_type: str, language: str) -> List[str]:
@@ -2577,6 +2588,7 @@ def _generate_question(
     cv_text: str,
     asked_so_far: List[str],
     focus: Optional[str],
+    interview_type: str = "mixed",
 ) -> Dict[str, Any]:
     model = (_env_str("OPENAI_MODEL") or "gpt-4o-mini").strip()
     max_tokens = _env_int("OPENAI_JSON_MAX_TOKENS", 1800)
@@ -2584,7 +2596,7 @@ def _generate_question(
     role_lock = _role_lock_instruction(role)
     prof = _role_profile(role)
     asked = "\n".join(f"- {q}" for q in asked_so_far[-8:]) if asked_so_far else "(yok)"
-    desired_type = _choose_desired_type(role, language, len(asked_so_far))
+    desired_type = _choose_desired_type(role, language, len(asked_so_far), interview_type=interview_type)
 
     focus_text = ""
     if focus:
@@ -3726,6 +3738,7 @@ class StartRequest(BaseModel):
     language: str = Field(min_length=1, max_length=20)
     n_questions: int = Field(ge=1, le=10)
     cv_text: str = Field(default="", max_length=50000)
+    interview_type: str = Field(default="mixed", max_length=20)
 
 class StartResponse(BaseModel):
     session_id: str
@@ -3749,6 +3762,7 @@ def start(req: StartRequest, ctx: ClientCtx = Depends(get_client_ctx)):
         language=req.language.strip(),
         n_questions=req.n_questions,
         cv_text=req.cv_text or "",
+        interview_type=(req.interview_type or "mixed").strip().lower(),
         questions=[],
         answers=[],
         current_index=0,
@@ -3763,6 +3777,7 @@ def start(req: StartRequest, ctx: ClientCtx = Depends(get_client_ctx)):
         cv_text=sess.cv_text,
         asked_so_far=[],
         focus=None,
+        interview_type=sess.interview_type,
     )
     sess.questions.append(q)
     SESSIONS[sid] = sess
@@ -3852,6 +3867,7 @@ def next_question(req: NextRequest, ctx: ClientCtx = Depends(get_client_ctx)):
         cv_text=sess.cv_text,
         asked_so_far=asked_texts,
         focus=sess.last_focus,
+        interview_type=sess.interview_type,
     )
     sess.questions.append(q)
     return {"ok": True, "done": False, "index": sess.current_index + 1, "total": sess.n_questions, "question": q}

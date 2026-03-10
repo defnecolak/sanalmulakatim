@@ -42,6 +42,7 @@
   const roleEl = $("role");
   const seniorityEl = $("seniority");
   const languageEl = $("language");
+  const interviewTypeEl = $("interviewType");
   const nQuestionsEl = $("nQuestions");
   const proTokenEl = $("proToken");
 
@@ -87,12 +88,23 @@
   const feedbackLoading = $("feedbackLoading");
   const feedbackContent = $("feedbackContent");
 
+  const summaryCard = $("summaryCard");
+  const summaryContent = $("summaryContent");
+
+  const recTimer = $("recTimer");
+  const historyList = $("historyList");
+  const clearHistoryBtn = $("clearHistoryBtn");
+  const referralCodeEl = $("referralCode");
+  const myReferralCodeEl = $("myReferralCode");
+
   // State
   let sessionId = null;
   let currentIndex = 0;
   let totalQuestions = 0;
   let currentQuestion = null;
   let isEvaluating = false;
+  let sessionScores = [];
+  let sessionCurrentRole = "";
 
   // Audio state
   let mediaRecorder = null;
@@ -101,6 +113,8 @@
   let audioCtx = null;
   let analyser = null;
   let meterRaf = null;
+  let recStartTime = 0;
+  let recTimerInterval = null;
 
   // Utils
   function showAlert(msg, kind = "error") {
@@ -400,11 +414,16 @@
         role,
         seniority: seniorityEl.value,
         language: languageEl.value,
+        interview_type: interviewTypeEl.value,
         n_questions: n,
         cv_text: cvTextEl.value || "",
       });
 
       sessionId = resp.session_id;
+      sessionCurrentRole = role;
+      sessionScores = [];
+      summaryCard.classList.add("hidden");
+      interviewCard.classList.remove("hidden");
       renderQuestion(resp.question, resp.index, resp.total);
       showMini(startStatus, "Başladı. İlk soruyu cevapla.", "ok");
     } catch (e) {
@@ -414,6 +433,42 @@
       startBtn.disabled = false;
       updateEvalBtn();
     }
+  }
+
+  // Radar chart SVG renderer
+  function renderRadarChart(scores) {
+    const labels = ["Yapı/STAR", "Uygunluk", "Etki", "Netlik", "Özgüven"];
+    const keys = ["yapi_star", "uygunluk", "etki_metrik", "netlik", "ozguven"];
+    const cx = 150, cy = 150, maxR = 120;
+    const n = 5;
+
+    function polarToCart(angle, r) {
+      const rad = (angle - 90) * Math.PI / 180;
+      return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)];
+    }
+
+    let gridLines = "";
+    for (let level = 1; level <= 4; level++) {
+      const r = maxR * level / 4;
+      const pts = Array.from({length: n}, (_, i) => polarToCart(i * 360/n, r).join(",")).join(" ");
+      gridLines += `<polygon points="${pts}" fill="none" stroke="#e2e8f0" stroke-width="1"/>`;
+    }
+
+    const dataPts = keys.map((k, i) => {
+      const val = (Math.max(0, Math.min(20, parseInt(scores[k] || 0, 10)))) / 20;
+      return polarToCart(i * 360/n, maxR * val).join(",");
+    }).join(" ");
+
+    const labelEls = labels.map((label, i) => {
+      const [lx, ly] = polarToCart(i * 360/n, maxR + 25);
+      return `<text x="${lx}" y="${ly}" text-anchor="middle" font-size="12" fill="#64748b">${escapeHtml(label)}</text>`;
+    }).join("");
+
+    return `<svg viewBox="0 0 300 300" class="radarChart">
+      ${gridLines}
+      <polygon points="${dataPts}" fill="rgba(37,99,235,0.2)" stroke="#2563eb" stroke-width="2"/>
+      ${labelEls}
+    </svg>`;
   }
 
   // Feedback renderer (clean + less clutter)
@@ -553,6 +608,14 @@
       setLoadingFeedback(false);
       renderFeedback(fb);
 
+      // Store score for summary
+      const scoreObj = {
+        question: (currentQuestion.question || "").substring(0, 100),
+        score: fb.overall_score || 0,
+        scoreBreakdown: fb.score_breakdown || {}
+      };
+      sessionScores.push(scoreObj);
+
       chipStatus.textContent = "cevaplandı";
       chipStatus.classList.remove("chip-warn");
       chipStatus.classList.add("chip-ok");
@@ -588,10 +651,15 @@
         progressText.textContent = `İlerleme: ${totalQuestions}/${totalQuestions} tamamlandı`;
         progressPct.textContent = "100%";
         progressFill.style.width = "100%";
-        questionText.textContent = "Mülakat bitti. Yeni oturum başlatabilirsin.";
-        answerEl.value = "";
-        feedbackBox.classList.add("hidden");
-        evalBtn.disabled = true;
+
+        // Show summary card
+        interviewCard.classList.add("hidden");
+        summaryCard.classList.remove("hidden");
+        renderSummary();
+
+        // Save to history
+        saveToHistory();
+
         return;
       }
       renderQuestion(resp.question, resp.index, resp.total);
@@ -602,6 +670,148 @@
       chipStatus.classList.add("chip-warn");
       updateEvalBtn();
     }
+  }
+
+  // Render summary with radar chart
+  function renderSummary() {
+    const avgScore = sessionScores.length > 0
+      ? Math.round(sessionScores.reduce((s, x) => s + x.score, 0) / sessionScores.length)
+      : 0;
+
+    const avgBreakdown = {
+      yapi_star: 0,
+      uygunluk: 0,
+      etki_metrik: 0,
+      netlik: 0,
+      ozguven: 0
+    };
+
+    sessionScores.forEach(s => {
+      const bd = s.scoreBreakdown || {};
+      avgBreakdown.yapi_star += parseInt(bd.yapi_star || 0, 10);
+      avgBreakdown.uygunluk += parseInt(bd.uygunluk || 0, 10);
+      avgBreakdown.etki_metrik += parseInt(bd.etki_metrik || 0, 10);
+      avgBreakdown.netlik += parseInt(bd.netlik || 0, 10);
+      avgBreakdown.ozguven += parseInt(bd.ozguven || 0, 10);
+    });
+
+    const count = sessionScores.length || 1;
+    Object.keys(avgBreakdown).forEach(k => {
+      avgBreakdown[k] = Math.round(avgBreakdown[k] / count);
+    });
+
+    const radarHtml = renderRadarChart(avgBreakdown);
+
+    const questionsHtml = sessionScores
+      .map((s, idx) => `
+        <li>
+          <div style="flex:1">
+            <div style="font-size:13px; color:var(--text)">${idx + 1}. ${escapeHtml(s.question)}</div>
+            <div style="font-size:12px; color:var(--muted); margin-top:4px">Soru ${idx + 1}/${count}</div>
+          </div>
+          <div class="histScore">${s.score}/100</div>
+        </li>
+      `)
+      .join("");
+
+    const proToken = getProToken();
+    const isPro = proToken ? "true" : "";
+
+    const pdfBtn = isPro ? `
+      <button class="ghost" style="margin-top:12px" onclick="downloadPdfReport()">
+        ⬇️ Raporu İndir (PDF)
+      </button>
+    ` : "";
+
+    summaryContent.innerHTML = `
+      <div class="summaryGrid">
+        <div class="summaryScore">
+          <div style="font-size:14px; color:var(--muted); margin-bottom:6px">Ortalama Puan</div>
+          <div class="scoreBig">${avgScore}<span style="color:var(--muted); font-size:28px">/100</span></div>
+          <div style="font-size:13px; color:var(--muted); margin-top:8px">Toplam ${count} soru</div>
+        </div>
+        <div>
+          ${radarHtml}
+        </div>
+      </div>
+
+      <div style="margin-top:18px;">
+        <div class="blockTitle">Sorular ve Puanlar</div>
+        <ul class="summaryList">
+          ${questionsHtml}
+        </ul>
+      </div>
+
+      ${pdfBtn}
+    `;
+
+    window.scrollTo({ top: summaryCard.offsetTop - 10, behavior: "smooth" });
+  }
+
+  // Save to interview history
+  function saveToHistory() {
+    const historyKey = "interviewHistory";
+    let history = [];
+    try {
+      const stored = localStorage.getItem(historyKey);
+      history = stored ? JSON.parse(stored) : [];
+    } catch (_) {}
+
+    sessionScores.forEach((s, idx) => {
+      const entry = {
+        date: new Date().toLocaleString("tr-TR"),
+        role: sessionCurrentRole,
+        question: s.question,
+        score: s.score,
+        type: interviewTypeEl.value
+      };
+      history.push(entry);
+    });
+
+    // Keep last 100 entries
+    if (history.length > 100) {
+      history = history.slice(-100);
+    }
+
+    try {
+      localStorage.setItem(historyKey, JSON.stringify(history));
+    } catch (_) {}
+
+    renderHistoryList();
+  }
+
+  // Render history list
+  function renderHistoryList() {
+    const historyKey = "interviewHistory";
+    let history = [];
+    try {
+      const stored = localStorage.getItem(historyKey);
+      history = stored ? JSON.parse(stored) : [];
+    } catch (_) {}
+
+    if (!history.length) {
+      historyList.innerHTML = '<div class="muted small" style="padding:8px 0">Henüz geçmiş yok.</div>';
+      return;
+    }
+
+    // Show last 20
+    const recent = history.slice(-20).reverse();
+    const html = recent
+      .map(e => `
+        <div class="historyItem">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start">
+            <div>
+              <div style="font-size:13px; color:var(--text)">${escapeHtml(e.role)}</div>
+              <div class="histDate">${escapeHtml(e.date)}</div>
+              <div style="font-size:12px; color:var(--muted); margin-top:4px; max-width:300px">${escapeHtml(e.question)}</div>
+            </div>
+            <div class="histScore">${e.score}/100</div>
+          </div>
+        </div>
+      `)
+      .join("");
+
+    historyList.innerHTML = html;
   }
 
   // Templates
@@ -775,6 +985,18 @@ Sonuç:
       mediaRecorder.start(250); // timeslice for stability
       startMeter(stream);
 
+      // Start recording timer
+      recStartTime = Date.now();
+      recTimer.classList.remove("hidden");
+      recTimer.textContent = "00:00";
+
+      recTimerInterval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - recStartTime) / 1000);
+        const mins = Math.floor(elapsed / 60);
+        const secs = elapsed % 60;
+        recTimer.textContent = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+      }, 100);
+
       recStart.disabled = true;
       recStop.disabled = false;
     } catch (e) {
@@ -792,6 +1014,14 @@ Sonuç:
       }
     } catch (_) {}
     stopMeter();
+
+    // Stop timer
+    if (recTimerInterval) {
+      clearInterval(recTimerInterval);
+      recTimerInterval = null;
+    }
+    recTimer.classList.add("hidden");
+    recTimer.textContent = "00:00";
 
     recStart.disabled = false;
     recStop.disabled = true;
@@ -816,6 +1046,33 @@ Sonuç:
         flashKeyBadge("Anahtar yok — buradan ekleyebilirsin");
       }
     });
+  }
+
+  // History and referral
+  if (clearHistoryBtn) {
+    clearHistoryBtn.addEventListener("click", () => {
+      if (confirm("Geçmişi silmek istediğine emin misin?")) {
+        try {
+          localStorage.removeItem("interviewHistory");
+          renderHistoryList();
+        } catch (_) {}
+      }
+    });
+  }
+
+  // Generate or restore referral code
+  function initReferralCode() {
+    const refKey = "myReferralCode";
+    let code = localStorage.getItem(refKey);
+    if (!code) {
+      code = "REF_" + Math.random().toString(36).substring(2, 10).toUpperCase();
+      try {
+        localStorage.setItem(refKey, code);
+      } catch (_) {}
+    }
+    if (myReferralCodeEl) {
+      myReferralCodeEl.textContent = code;
+    }
   }
 
   // Buttons
@@ -846,4 +1103,11 @@ Sonuç:
   refreshHealth();
   refreshUsage();
   refreshMics();
+  initReferralCode();
+  renderHistoryList();
+
+  // PDF export stub (placeholder for Pro users)
+  window.downloadPdfReport = function() {
+    showAlert("PDF rapor indirme henüz uygulanmamıştır. Lütfen daha sonra deneyin.");
+  };
 })();

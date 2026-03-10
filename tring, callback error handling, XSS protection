@@ -1,0 +1,138 @@
+warning: in the working copy of 'backend/main.py', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/backend/main.py b/backend/main.py[m
+[1mindex 0ac19a3..7a1904c 100644[m
+[1m--- a/backend/main.py[m
+[1m+++ b/backend/main.py[m
+[36m@@ -4187,8 +4187,10 @@[m [masync def create_checkout(request: Request, ctx: ClientCtx = Depends(get_client_[m
+         order_id = "ord_" + uuid.uuid4().hex[:24][m
+         usage_db.create_payment_order(order_id=order_id, provider="iyzico", client_id=ctx.client_id, email=email or None)[m
+ [m
+[31m-        amount = float(_env_float("PRO_PRICE_TRY", 199.0))[m
+[31m-        amount = round(amount, 2)[m
+[32m+[m[32m        amount_raw = float(_env_float("PRO_PRICE_TRY", 199.0))[m
+[32m+[m[32m        amount_raw = round(amount_raw, 2)[m
+[32m+[m[32m        # iyzico API requires price fields as decimal strings (e.g. "199.00"), NOT numbers.[m
+[32m+[m[32m        amount_str = f"{amount_raw:.2f}"[m
+         title = (_env_str("PRO_TITLE") or "Pro Erişim").strip() or "Pro Erişim"[m
+ [m
+         callback_url = f"{base_url}/api/billing/iyzico/callback?order_id={order_id}"[m
+[36m@@ -4210,8 +4212,8 @@[m [masync def create_checkout(request: Request, ctx: ClientCtx = Depends(get_client_[m
+         init_payload: Dict[str, Any] = {[m
+             "locale": "tr",[m
+             "conversationId": order_id,[m
+[31m-            "price": amount,[m
+[31m-            "paidPrice": amount,[m
+[32m+[m[32m            "price": amount_str,[m
+[32m+[m[32m            "paidPrice": amount_str,[m
+             "currency": "TRY",[m
+             "basketId": order_id,[m
+             "paymentGroup": "PRODUCT",[m
+[36m@@ -4250,24 +4252,39 @@[m [masync def create_checkout(request: Request, ctx: ClientCtx = Depends(get_client_[m
+                     "name": title,[m
+                     "category1": "Digital",[m
+                     "itemType": "VIRTUAL",[m
+[31m-                    "price": amount,[m
+[32m+[m[32m                    "price": amount_str,[m
+                 }[m
+             ],[m
+         }[m
+ [m
+         uri = "/payment/iyzipos/checkoutform/initialize/auth/ecom"[m
+[31m-        j = _iyzico_post(uri, init_payload)[m
+[31m-        j = _iyzico_expect_success(j)[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            j = _iyzico_post(uri, init_payload)[m
+[32m+[m[32m            j = _iyzico_expect_success(j)[m
+[32m+[m[32m        except HTTPException as exc:[m
+[32m+[m[32m            # Update order so admin can debug later[m
+[32m+[m[32m            try:[m
+[32m+[m[32m                usage_db.update_payment_order(order_id, status="INIT_FAILED", last_error=str(exc.detail)[:500])[m
+[32m+[m[32m            except Exception:[m
+[32m+[m[32m                pass[m
+[32m+[m[32m            raise[m
+         if _env_bool("IYZICO_VALIDATE_SIGNATURE", True) and not _iyzico_signature_valid(j, _IYZICO_CF_INIT_SIGNATURE_ORDER):[m
+[32m+[m[32m            try:[m
+[32m+[m[32m                usage_db.update_payment_order(order_id, status="INIT_SIGNATURE_FAIL", last_error="initialize signature doğrulaması başarısız")[m
+[32m+[m[32m            except Exception:[m
+[32m+[m[32m                pass[m
+             raise HTTPException(status_code=502, detail="iyzico initialize signature doğrulaması başarısız.")[m
+ [m
+         pay_url = (j.get("paymentPageUrl") or "").strip()[m
+         if not pay_url:[m
+[31m-            # Fallback: some responses might not include paymentPageUrl[m
+[32m+[m[32m            # Fallback: build URL from token when paymentPageUrl is missing[m
+             token = (j.get("token") or "").strip()[m
+             if token:[m
+[31m-                # Known sandbox URL pattern from docs[m
+[31m-                pay_url = f"https://sandbox-cpp.iyzipay.com?token={token}&lang=tr"[m
+[32m+[m[32m                iyzico_base = (_env_str("IYZICO_BASE_URL") or "https://sandbox-api.iyzipay.com").strip().lower()[m
+[32m+[m[32m                if "sandbox" in iyzico_base:[m
+[32m+[m[32m                    pay_url = f"https://sandbox-cpp.iyzipay.com?token={token}&lang=tr"[m
+[32m+[m[32m                else:[m
+[32m+[m[32m                    pay_url = f"https://cpp.iyzipay.com?token={token}&lang=tr"[m
+ [m
+         if not pay_url:[m
+             raise HTTPException(status_code=502, detail=f"iyzico paymentPageUrl alınamadı: {j}")[m
+[36m@@ -4329,6 +4346,11 @@[m [masync def iyzico_callback(request: Request, order_id: str):[m
+     order_id = (order_id or "").strip()[m
+     if not order_id:[m
+         return HTMLResponse("<h1>order_id eksik.</h1>", status_code=400)[m
+[32m+[m[32m    # Validate order_id format to prevent injection (expected: ord_<hex>)[m
+[32m+[m[32m    if not re.match(r"^ord_[a-f0-9]{1,32}$", order_id):[m
+[32m+[m[32m        return HTMLResponse("<h1>Geçersiz order_id formatı.</h1>", status_code=400)[m
+[32m+[m[32m    # Escape for safe use in HTML responses[m
+[32m+[m[32m    safe_order_id = escape(order_id)[m
+ [m
+     token = ""[m
+     if request.method == "GET":[m
+[36m@@ -4370,9 +4392,9 @@[m [masync def iyzico_callback(request: Request, order_id: str):[m
+         usage_db.update_payment_order(order_id, status="TOKEN_ISSUED")[m
+         return HTMLResponse([m
+             f"""<!doctype html><html><head><meta charset='utf-8'>[m
+[31m-<meta http-equiv='refresh' content='0;url=/success?provider=iyzico&ref={order_id}'>[m
+[32m+[m[32m<meta http-equiv='refresh' content='0;url=/success?provider=iyzico&ref={safe_order_id}'>[m
+ <title>Yönlendiriliyor</title></head><body>[m
+[31m-<p>Yönlendiriliyor… <a href='/success?provider=iyzico&ref={order_id}'>Devam</a></p>[m
+[32m+[m[32m<p>Yönlendiriliyor… <a href='/success?provider=iyzico&ref={safe_order_id}'>Devam</a></p>[m
+ </body></html>""",[m
+             status_code=200,[m
+         )[m
+[36m@@ -4380,7 +4402,21 @@[m [masync def iyzico_callback(request: Request, order_id: str):[m
+     # Verify payment result with CF-Retrieve[m
+     uri = "/payment/iyzipos/checkoutform/auth/ecom/detail"[m
+     retrieve_payload: Dict[str, Any] = {"locale": "tr", "conversationId": order_id, "token": token}[m
+[31m-    resp = _iyzico_post(uri, retrieve_payload)[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        resp = _iyzico_post(uri, retrieve_payload)[m
+[32m+[m[32m    except HTTPException as exc:[m
+[32m+[m[32m        logger.warning(f"iyzico RETRIEVE_FAIL: order={order_id} err={exc.detail}")[m
+[32m+[m[32m        usage_db.update_payment_order(order_id, status="RETRIEVE_FAILED", last_error=str(exc.detail)[:500])[m
+[32m+[m[32m        return HTMLResponse([m
+[32m+[m[32m            f"""<!doctype html><html><head><meta charset='utf-8'>[m
+[32m+[m[32m<meta http-equiv='refresh' content='3;url=/cancel'>[m
+[32m+[m[32m<title>Ödeme Doğrulanamadı</title></head><body>[m
+[32m+[m[32m<h1>Ödeme doğrulanamadı</h1>[m
+[32m+[m[32m<p>iyzico sunucusundan cevap alınamadı. Lütfen birkaç dakika bekleyip tekrar dene.</p>[m
+[32m+[m[32m<p><a href='/cancel'>İptal sayfasına git</a></p>[m
+[32m+[m[32m</body></html>""",[m
+[32m+[m[32m            status_code=200,[m
+[32m+[m[32m        )[m
+ [m
+     # Store raw response for support/debug (best-effort; avoid crashing if JSON has weird types)[m
+     try:[m
+[36m@@ -4428,7 +4464,7 @@[m [masync def iyzico_callback(request: Request, order_id: str):[m
+         if isinstance(order, dict):[m
+             emailed = _auto_email_token_best_effort(order.get("email"), pro_token, base_url=base_url)[m
+ [m
+[31m-        success_url = f"/success?provider=iyzico&ref={order_id}" + ("&emailed=1" if emailed else "")[m
+[32m+[m[32m        success_url = f"/success?provider=iyzico&ref={safe_order_id}" + ("&emailed=1" if emailed else "")[m
+ [m
+         return HTMLResponse([m
+             f"""<!doctype html><html><head><meta charset='utf-8'>[m
+[36m@@ -4923,4 +4959,4 @@[m [mdef privacy_delete_compat(req: PrivacyDeleteConfirm, request: Request, ctx: Clie[m
+ [m
+     New flow is email-verified; so this endpoint now only accepts a token.[m
+     """[m
+[31m-    return privacy_delete_confirm(req, request, ctx)[m
+[32m+[m[32m    return privacy_delete_confirm(req, request, ctx)[m
+\ No newline at end of file[m

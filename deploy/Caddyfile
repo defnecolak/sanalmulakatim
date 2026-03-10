@@ -51,7 +51,7 @@
 
     # Admin security panel: hidden from the internet via IP allowlist + Basic Auth.
     # If not allowlisted, it 404s (doesn't reveal it exists).
-    @admin path /admin/* /api/admin/*
+    @admin path /admin /admin/* /api/admin/*
     handle @admin {
         @allowed remote_ip {$ADMIN_ALLOW_IPS}
         handle @allowed {

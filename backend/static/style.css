@@ -692,3 +692,34 @@ audio{
   padding: 8px 10px;
 }
 .compactList li{ margin: 8px 0; }
+
+/* Radar Chart */
+.radarChart { max-width: 300px; margin: 0 auto; display: block; }
+
+/* Summary Card */
+.summaryGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.summaryScore { text-align: center; }
+.summaryScore .scoreBig { font-size: 48px; font-weight: 800; color: var(--primary); }
+.summaryList { list-style: none; padding: 0; }
+.summaryList li { padding: 8px 0; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+
+/* Recording Timer */
+.recTimer { font-family: var(--mono); font-size: 16px; font-weight: 600; color: var(--err); }
+.recDot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--err); margin-right: 6px; animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* History */
+.historyList { max-height: 300px; overflow-y: auto; }
+.historyItem { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.historyItem .histDate { color: var(--muted); font-size: 12px; }
+.historyItem .histScore { font-weight: 700; color: var(--primary); }
+
+/* Comparison */
+.compareGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.compareBox { background: var(--bg); border-radius: 10px; padding: 12px; font-size: 13px; }
+.compareLabel { font-weight: 700; margin-bottom: 6px; font-size: 12px; color: var(--muted); }
+
+/* Mobile responsive */
+@media (max-width: 720px) {
+  .summaryGrid, .compareGrid { grid-template-columns: 1fr; }
+}
