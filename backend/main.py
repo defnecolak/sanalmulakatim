@@ -12,6 +12,7 @@ import os
 import platform
 import ipaddress
 import re
+import secrets
 import sqlite3
 import threading
 import time
@@ -525,7 +526,8 @@ def _ocr_images_with_openai(client: OpenAI, images_png: List[bytes], language: s
                     acc.append(t)
         return "\n".join(acc).strip()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OCR başarısız: {type(e).__name__}: {e}")
+        logger.exception("OCR failed")
+        raise HTTPException(status_code=500, detail="OCR işlemi başarısız oldu. Lütfen tekrar dene.")
 
 """DB layer
 
@@ -985,7 +987,7 @@ class SQLiteUsageDB:
         if not email:
             raise ValueError("email boş")
 
-        raw = "ml_" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+        raw = "ml_" + secrets.token_hex(20)
         token_hash = self._hash_recovery_token(raw)
         now = self._now()
         exp = now + max(5, int(ttl_minutes)) * 60
@@ -1046,7 +1048,7 @@ class SQLiteUsageDB:
         if not email:
             raise ValueError("email boş")
 
-        raw = "dl_" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+        raw = "dl_" + secrets.token_hex(20)
         token_hash = self._hash_delete_token(raw)
         now = self._now()
         exp = now + max(5, int(ttl_minutes)) * 60
@@ -1608,7 +1610,7 @@ class PostgresUsageDB:
         if not email:
             raise ValueError("email boş")
 
-        raw = "ml_" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+        raw = "ml_" + secrets.token_hex(20)
         token_hash = self._hash_recovery_token(raw)
         now = self._now()
         exp = now + max(5, int(ttl_minutes)) * 60
@@ -1665,7 +1667,7 @@ class PostgresUsageDB:
         if not email:
             raise ValueError("email boş")
 
-        raw = "dl_" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+        raw = "dl_" + secrets.token_hex(20)
         token_hash = self._hash_delete_token(raw)
         now = self._now()
         exp = now + max(5, int(ttl_minutes)) * 60
@@ -3424,8 +3426,8 @@ def health(request: Request):
     # Optional hardening: hide detailed config unless the admin key is provided.
     if ADMIN_STATUS_KEY:
         sent = (request.headers.get("x-admin-key") or "").strip()
-        if not hmac.compare_digest(sent, ADMIN_STATUS_KEY):
-            return {"ok": True}
+        if not sent or not hmac.compare_digest(sent, ADMIN_STATUS_KEY):
+            raise HTTPException(status_code=403, detail="Yetkisiz erişim.")
 
     key_ok = bool(_env_str("OPENAI_API_KEY"))
     stripe_ok = _stripe_enabled()
@@ -3723,7 +3725,7 @@ class StartRequest(BaseModel):
     seniority: str = Field(min_length=1, max_length=50)
     language: str = Field(min_length=1, max_length=20)
     n_questions: int = Field(ge=1, le=10)
-    cv_text: str = ""
+    cv_text: str = Field(default="", max_length=50000)
 
 class StartResponse(BaseModel):
     session_id: str
@@ -3738,7 +3740,7 @@ def start(req: StartRequest, ctx: ClientCtx = Depends(get_client_ctx)):
 
     client = _get_client()
 
-    sid = str(uuid.uuid4())
+    sid = secrets.token_hex(16)
     sess = InterviewSession(
         id=sid,
         owner_client_id=ctx.client_id,
@@ -3781,7 +3783,7 @@ def evaluate(req: EvaluateRequest, ctx: ClientCtx = Depends(get_client_ctx)):
         raise HTTPException(status_code=404, detail="Oturum bulunamadı. Yeniden 'Mülakatı Başlat' yap.")
 
     # Session ownership guard (prevents guessing/reuse across clients)
-    if getattr(sess, "owner_client_id", "") and sess.owner_client_id != ctx.client_id:
+    if getattr(sess, "owner_client_id", None) != ctx.client_id:
         raise HTTPException(status_code=404, detail="Oturum bulunamadı.")
 
     client = _get_client()
@@ -3825,7 +3827,7 @@ def next_question(req: NextRequest, ctx: ClientCtx = Depends(get_client_ctx)):
         raise HTTPException(status_code=404, detail="Oturum bulunamadı.")
 
     # Session ownership guard
-    if getattr(sess, "owner_client_id", "") and sess.owner_client_id != ctx.client_id:
+    if getattr(sess, "owner_client_id", None) != ctx.client_id:
         raise HTTPException(status_code=404, detail="Oturum bulunamadı.")
 
     sess.current_index += 1
@@ -3889,7 +3891,8 @@ async def transcribe(request: Request, file: UploadFile = File(...), language: s
             charge_usage(ctx, "transcribe")
             return {"text": (text or "").strip(), "warning": "Transcribe fallback (whisper-1) kullanıldı."}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Yazıya çevirme başarısız: {type(e).__name__}: {e}")
+            logger.exception("Transcription failed")
+            raise HTTPException(status_code=500, detail="Yazıya çevirme başarısız oldu. Lütfen tekrar dene.")
 
 @app.post("/api/parse_pdf")
 async def parse_pdf(file: UploadFile = File(...), language: str = "tr", ctx: ClientCtx = Depends(get_client_ctx)):
@@ -3988,7 +3991,8 @@ async def parse_pdf(file: UploadFile = File(...), language: str = "tr", ctx: Cli
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PDF OCR başarısız: {type(e).__name__}: {e}")
+        logger.exception("PDF OCR failed")
+        raise HTTPException(status_code=500, detail="PDF OCR işlemi başarısız oldu. Lütfen tekrar dene.")
 
 # -----------------------------
 # Payments (optional): stripe / iyzico
@@ -4094,16 +4098,19 @@ def _iyzico_post(uri_path: str, body: Dict[str, Any]) -> Dict[str, Any]:
     try:
         r = requests.post(url, headers=headers, data=body_json.encode("utf-8"), timeout=_env_int("IYZICO_TIMEOUT", 25))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"iyzico istek hatası: {type(e).__name__}: {e}")
+        logger.exception(f"iyzico request error: {uri_path}")
+        raise HTTPException(status_code=502, detail="Ödeme sağlayıcısına bağlanılamadı. Lütfen tekrar dene.")
 
     try:
         j = r.json()
     except Exception:
-        raise HTTPException(status_code=502, detail=f"iyzico cevap JSON değil (HTTP {r.status_code}).")
+        logger.warning(f"iyzico non-JSON response: HTTP {r.status_code}")
+        raise HTTPException(status_code=502, detail="Ödeme sağlayıcısından geçersiz cevap alındı.")
 
     if r.status_code >= 400:
         msg = (j.get("errorMessage") if isinstance(j, dict) else None) or str(j)
-        raise HTTPException(status_code=502, detail=f"iyzico hata (HTTP {r.status_code}): {msg}")
+        logger.warning(f"iyzico error: HTTP {r.status_code}: {msg}")
+        raise HTTPException(status_code=502, detail="Ödeme sağlayıcısı hata döndürdü. Lütfen tekrar dene.")
     return j
 
 def _iyzico_expect_success(j: Dict[str, Any]) -> Dict[str, Any]:
@@ -4111,7 +4118,8 @@ def _iyzico_expect_success(j: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail="iyzico cevap formatı beklenmedik.")
     if (j.get("status") or "").lower() != "success":
         msg = (j.get("errorMessage") or j.get("errorCode") or "Bilinmeyen hata")
-        raise HTTPException(status_code=502, detail=f"iyzico başarısız: {msg}")
+        logger.warning(f"iyzico failure: {msg}")
+        raise HTTPException(status_code=502, detail="Ödeme sağlayıcısı işlemi reddetti. Lütfen tekrar dene.")
     return j
 
 @app.post("/api/billing/create_checkout")
@@ -4157,7 +4165,8 @@ async def create_checkout(request: Request, ctx: ClientCtx = Depends(get_client_
             )
             return {"url": session.url, "provider": "stripe"}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Stripe checkout oluşturulamadı: {type(e).__name__}: {e}")
+            logger.exception("Stripe checkout creation failed")
+            raise HTTPException(status_code=500, detail="Ödeme oturumu oluşturulamadı. Lütfen tekrar dene.")
 
     # --- iyzico (Checkout Form / Hosted Payment Page) ---
     if provider == "iyzico":
@@ -4184,7 +4193,7 @@ async def create_checkout(request: Request, ctx: ClientCtx = Depends(get_client_
         if isinstance(data, dict):
             email = str(data.get("email") or "").strip()
 
-        order_id = "ord_" + uuid.uuid4().hex[:24]
+        order_id = "ord_" + secrets.token_hex(12)
         usage_db.create_payment_order(order_id=order_id, provider="iyzico", client_id=ctx.client_id, email=email or None)
 
         amount_raw = float(_env_float("PRO_PRICE_TRY", 199.0))
@@ -4287,7 +4296,8 @@ async def create_checkout(request: Request, ctx: ClientCtx = Depends(get_client_
                     pay_url = f"https://cpp.iyzipay.com?token={token}&lang=tr"
 
         if not pay_url:
-            raise HTTPException(status_code=502, detail=f"iyzico paymentPageUrl alınamadı: {j}")
+            logger.warning(f"iyzico paymentPageUrl missing: {j}")
+            raise HTTPException(status_code=502, detail="Ödeme sayfası oluşturulamadı. Lütfen tekrar dene.")
 
         return {"url": pay_url, "provider": "iyzico", "order_id": order_id}
 
@@ -4311,7 +4321,8 @@ async def stripe_webhook(request: Request):
     try:
         event = stripe.Webhook.construct_event(payload=payload, sig_header=sig, secret=wh_secret)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Webhook doğrulaması başarısız: {type(e).__name__}: {e}")
+        logger.warning(f"Webhook validation failed: {type(e).__name__}")
+        raise HTTPException(status_code=400, detail="Webhook doğrulaması başarısız.")
 
     etype = event.get("type")
     if etype == "checkout.session.completed":
@@ -4321,9 +4332,9 @@ async def stripe_webhook(request: Request):
         md = obj.get("metadata") or {}
         if isinstance(md, dict):
             client_id = md.get("client_id")
-        token = "pro_" + str(uuid.uuid4()).replace("-", "")[:20]
+        token = "pro_" + secrets.token_hex(16)
         usage_db.add_pro_token(token=token, client_id=client_id, provider="stripe", provider_ref=session_id, stripe_session_id=session_id)
-        logger.info(f"Stripe completed: session={session_id} client={client_id} token={token}")
+        logger.info(f"Stripe completed: session={session_id} client={client_id} token={token[:8]}***")
         return {"ok": True}
 
     return {"ok": True}
@@ -4337,6 +4348,10 @@ async def iyzico_callback(request: Request, order_id: str):
     We then call CF-Retrieve with that token to verify payment result.
     On success, we generate/store a Pro token and redirect user to /success.
     """
+    # Rate limit callback to prevent replay attacks
+    ctx = get_client_ctx(request)
+    enforce_rate_limit(ctx, "billing")
+
     if not _iyzico_enabled():
         return HTMLResponse(
             "<h1>iyzico ayarlı değil.</h1><p>Sunucu tarafında IYZICO_API_KEY / IYZICO_SECRET_KEY eksik.</p>",
@@ -4377,11 +4392,11 @@ async def iyzico_callback(request: Request, order_id: str):
             status_code=400,
         )
 
-    # Make sure we have a payment order record (best-effort)
+    # Verify payment order exists (must have been created during create_checkout)
     order = usage_db.get_payment_order(order_id)
     if not order:
-        usage_db.create_payment_order(order_id=order_id, provider="iyzico", client_id=None, email=None)
-        order = usage_db.get_payment_order(order_id)
+        logger.warning(f"iyzico callback for unknown order: {order_id}")
+        return HTMLResponse("<h1>Geçersiz sipariş.</h1>", status_code=400)
 
     # Track callback arrival (idempotent)
     usage_db.update_payment_order(order_id, status="CALLBACK_RECEIVED", provider_token=token, last_error=None)
@@ -4446,10 +4461,23 @@ async def iyzico_callback(request: Request, order_id: str):
     if status == "success" and pay_status == "SUCCESS" and fraud_status == "1":
         usage_db.update_payment_order(order_id, status="VERIFIED_SUCCESS", provider_payment_id=(payment_id or None), last_error=None)
 
+        # Re-check idempotency AFTER verification (race condition guard)
+        existing_token = usage_db.get_token_by_provider_ref("iyzico", order_id)
+        if existing_token:
+            usage_db.update_payment_order(order_id, status="TOKEN_ISSUED")
+            return HTMLResponse(
+                f"""<!doctype html><html><head><meta charset='utf-8'>
+<meta http-equiv='refresh' content='0;url=/success?provider=iyzico&ref={safe_order_id}'>
+<title>Yönlendiriliyor</title></head><body>
+<p>Yönlendiriliyor… <a href='/success?provider=iyzico&ref={safe_order_id}'>Devam</a></p>
+</body></html>""",
+                status_code=200,
+            )
+
         order = usage_db.get_payment_order(order_id)
         client_id = order.get("client_id") if isinstance(order, dict) else None
 
-        pro_token = "pro_" + uuid.uuid4().hex[:20]
+        pro_token = "pro_" + secrets.token_hex(16)
         usage_db.add_pro_token(token=pro_token, client_id=client_id, provider="iyzico", provider_ref=order_id)
 
         usage_db.update_payment_order(
@@ -4457,7 +4485,7 @@ async def iyzico_callback(request: Request, order_id: str):
             status="TOKEN_ISSUED",
             provider_payment_id=(payment_id or None),
         )
-        logger.info(f"iyzico SUCCESS: order={order_id} client={client_id} token={pro_token}")
+        logger.info(f"iyzico SUCCESS: order={order_id} client={client_id} token={pro_token[:8]}***")
 
         base_url = _env_str("PUBLIC_BASE_URL", "http://localhost:5555").rstrip("/")
         emailed = False
@@ -4544,7 +4572,7 @@ def redeem(
 # -----------------------------
 # SMTP (optional): send Pro token via email
 # -----------------------------
-_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
 def _smtp_enabled() -> bool:
     host = _env_str("SMTP_HOST")
@@ -4691,7 +4719,8 @@ def email_token(req: EmailTokenRequest, ctx: ClientCtx = Depends(get_client_ctx)
         _send_email(email, subject, body)
     except Exception as e:
         logger.exception("Email send failed")
-        raise HTTPException(status_code=500, detail=f"E-posta gönderilemedi: {type(e).__name__}: {e}")
+        logger.exception("Email send failed")
+        raise HTTPException(status_code=500, detail="E-posta gönderilemedi. Lütfen tekrar dene.")
 
     return {"ok": True}
 
@@ -4742,7 +4771,8 @@ def pro_recovery_request(req: RecoveryRequest, request: Request, ctx: ClientCtx 
         try:
             raw = usage_db.create_recovery_link(email, ttl_minutes=ttl_min)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Recovery link üretilemedi: {type(e).__name__}")
+            logger.exception("Recovery link generation failed")
+            raise HTTPException(status_code=500, detail="Kurtarma linki üretilemedi. Lütfen tekrar dene.")
 
         app_name = (_env_str("APP_NAME") or "Sanal Mülakatım").strip()
         base_url = (_env_str("PUBLIC_BASE_URL") or "http://localhost:5555").rstrip("/")
@@ -4763,7 +4793,8 @@ def pro_recovery_request(req: RecoveryRequest, request: Request, ctx: ClientCtx 
         except Exception as e:
             logger.exception("Recovery email send failed")
             # Don't leak more details
-            raise HTTPException(status_code=500, detail=f"E-posta gönderilemedi: {type(e).__name__}")
+            logger.exception("Recovery email send failed")
+            raise HTTPException(status_code=500, detail="E-posta gönderilemedi. Lütfen tekrar dene.")
 
     try:
         bk = ban_key_for_request(request, CLIENT_ID_SALT)
