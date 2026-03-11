@@ -612,7 +612,8 @@
       const scoreObj = {
         question: (currentQuestion.question || "").substring(0, 100),
         score: fb.overall_score || 0,
-        scoreBreakdown: fb.score_breakdown || {}
+        scoreBreakdown: fb.score_breakdown || {},
+        summary: (fb.summary || "").substring(0, 300)
       };
       sessionScores.push(scoreObj);
 
@@ -1107,7 +1108,68 @@ Sonuç:
   renderHistoryList();
 
   // PDF export stub (placeholder for Pro users)
-  window.downloadPdfReport = function() {
-    showAlert("PDF rapor indirme henüz uygulanmamıştır. Lütfen daha sonra deneyin.");
+  window.downloadPdfReport = async function() {
+    const proToken = getProToken();
+    if (!proToken) {
+      showAlert("PDF raporu sadece Pro kullanıcılar için.");
+      return;
+    }
+    if (!sessionScores || sessionScores.length === 0) {
+      showAlert("Rapor oluşturmak için mülakat verisi bulunamadı.");
+      return;
+    }
+
+    const avgScore = Math.round(sessionScores.reduce((s, x) => s + x.score, 0) / sessionScores.length);
+    const avgBreakdown = { yapi_star: 0, uygunluk: 0, etki_metrik: 0, netlik: 0, ozguven: 0 };
+    sessionScores.forEach(s => {
+      const bd = s.scoreBreakdown || {};
+      avgBreakdown.yapi_star += parseInt(bd.yapi_star || 0, 10);
+      avgBreakdown.uygunluk += parseInt(bd.uygunluk || 0, 10);
+      avgBreakdown.etki_metrik += parseInt(bd.etki_metrik || 0, 10);
+      avgBreakdown.netlik += parseInt(bd.netlik || 0, 10);
+      avgBreakdown.ozguven += parseInt(bd.ozguven || 0, 10);
+    });
+    const count = sessionScores.length || 1;
+    Object.keys(avgBreakdown).forEach(k => {
+      avgBreakdown[k] = Math.round(avgBreakdown[k] / count);
+    });
+
+    try {
+      const resp = await fetch("/api/report/pdf", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-pro-token": proToken,
+        },
+        body: JSON.stringify({
+          session_id: sessionId || "",
+          scores: sessionScores.map(s => ({
+            question: s.question,
+            score: s.score,
+            summary: s.summary || "",
+          })),
+          avg_score: avgScore,
+          avg_breakdown: avgBreakdown,
+        }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        showAlert(err.detail || "PDF raporu oluşturulamadı.");
+        return;
+      }
+
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "mulakat-raporu.pdf";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      showAlert("PDF indirme hatası: " + e.message);
+    }
   };
 })();

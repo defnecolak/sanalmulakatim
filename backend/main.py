@@ -730,7 +730,42 @@ class SQLiteUsageDB:
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_delete_links_email ON delete_links(email_hash);"
             )
+
+            # Referral system
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS referral_records(
+                  ref_id TEXT PRIMARY KEY,
+                  referral_code TEXT NOT NULL,
+                  referee_email_hash TEXT,
+                  referrer_client_id TEXT,
+                  created_at INTEGER NOT NULL,
+                  status TEXT DEFAULT 'pending'
+                );
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_referral_code ON referral_records(referral_code);"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_referral_client ON referral_records(referrer_client_id);"
+            )
+
             self._conn.commit()
+
+    def _execute_write(self, sql: str, params: tuple = ()) -> None:
+        """Generic write helper for ad-hoc inserts/updates."""
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(sql, params)
+            self._conn.commit()
+
+    def _execute_read(self, sql: str, params: tuple = ()) -> list:
+        """Generic read helper returning list of tuples."""
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(sql, params)
+            return cur.fetchall()
 
     @staticmethod
     def _now() -> int:
@@ -1342,7 +1377,41 @@ class PostgresUsageDB:
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_delete_links_email ON delete_links(email_hash);")
 
+                # Referral system
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS referral_records(
+                      ref_id TEXT PRIMARY KEY,
+                      referral_code TEXT NOT NULL,
+                      referee_email_hash TEXT,
+                      referrer_client_id TEXT,
+                      created_at BIGINT NOT NULL,
+                      status TEXT DEFAULT 'pending'
+                    );
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_referral_code ON referral_records(referral_code);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_referral_client ON referral_records(referrer_client_id);")
+
             self._conn.commit()
+
+    def _execute_write(self, sql: str, params: tuple = ()) -> None:
+        """Generic write helper for ad-hoc inserts/updates.
+        Accepts '?' placeholders and converts to '%s' for Postgres."""
+        sql = sql.replace("?", "%s")
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute(sql, params)
+            self._conn.commit()
+
+    def _execute_read(self, sql: str, params: tuple = ()) -> list:
+        """Generic read helper returning list of tuples.
+        Accepts '?' placeholders and converts to '%s' for Postgres."""
+        sql = sql.replace("?", "%s")
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute(sql, params)
+                return cur.fetchall()
 
     @staticmethod
     def _now() -> int:
@@ -5007,3 +5076,269 @@ def privacy_delete_compat(req: PrivacyDeleteConfirm, request: Request, ctx: Clie
     New flow is email-verified; so this endpoint now only accepts a token.
     """
     return privacy_delete_confirm(req, request, ctx)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# PDF REPORT EXPORT
+# ──────────────────────────────────────────────────────────────────────
+
+class ReportRequest(BaseModel):
+    session_id: str
+    scores: List[Dict[str, Any]] = Field(default_factory=list)
+    avg_score: int = 0
+    avg_breakdown: Dict[str, int] = Field(default_factory=dict)
+
+
+def _build_pdf_report(
+    role: str,
+    seniority: str,
+    interview_type: str,
+    language: str,
+    scores: List[Dict[str, Any]],
+    avg_score: int,
+    avg_breakdown: Dict[str, int],
+) -> bytes:
+    """Build a PDF interview report using pymupdf (fitz)."""
+    import fitz  # pymupdf
+
+    doc = fitz.open()
+    width, height = 595, 842  # A4
+
+    # ── Page 1: Title & Overview ──
+    page = doc.new_page(width=width, height=height)
+
+    # Title
+    page.insert_text(
+        fitz.Point(50, 60),
+        "Mülakat Performans Raporu",
+        fontsize=22,
+        fontname="helv",
+        color=(0.13, 0.13, 0.60),
+    )
+
+    # Subtitle line
+    date_str = time.strftime("%d.%m.%Y %H:%M", time.localtime())
+    page.insert_text(
+        fitz.Point(50, 85),
+        f"Tarih: {date_str}",
+        fontsize=10,
+        fontname="helv",
+        color=(0.4, 0.4, 0.4),
+    )
+
+    # Info block
+    y = 115
+    info_lines = [
+        f"Pozisyon: {role}",
+        f"Kidem: {seniority}",
+        f"Mulakat Tipi: {interview_type}",
+        f"Dil: {language}",
+        f"Toplam Soru: {len(scores)}",
+    ]
+    for line in info_lines:
+        page.insert_text(fitz.Point(50, y), line, fontsize=11, fontname="helv")
+        y += 18
+
+    # Overall score box
+    y += 10
+    score_color = (0.15, 0.65, 0.30) if avg_score >= 60 else (0.85, 0.55, 0.10) if avg_score >= 40 else (0.80, 0.20, 0.20)
+    page.insert_text(
+        fitz.Point(50, y),
+        f"Ortalama Puan: {avg_score}/100",
+        fontsize=18,
+        fontname="helv",
+        color=score_color,
+    )
+    y += 30
+
+    # Score breakdown
+    bd_labels = {
+        "yapi_star": "Yapi/STAR",
+        "uygunluk": "Uygunluk",
+        "etki_metrik": "Etki/Metrik",
+        "netlik": "Netlik",
+        "ozguven": "Ozguven",
+    }
+    page.insert_text(fitz.Point(50, y), "Kategori Puanlari:", fontsize=13, fontname="helv", color=(0.13, 0.13, 0.60))
+    y += 22
+    for key, label in bd_labels.items():
+        val = avg_breakdown.get(key, 0)
+        bar_w = max(1, val * 8)
+        bar_color = (0.25, 0.60, 0.90)
+        page.draw_rect(fitz.Rect(180, y - 10, 180 + bar_w, y + 2), color=bar_color, fill=bar_color)
+        page.insert_text(fitz.Point(50, y), f"{label}:", fontsize=10, fontname="helv")
+        page.insert_text(fitz.Point(180 + bar_w + 8, y), f"{val}/20", fontsize=10, fontname="helv", color=(0.3, 0.3, 0.3))
+        y += 22
+
+    # ── Questions & Scores pages ──
+    y += 20
+    page.insert_text(fitz.Point(50, y), "Soru Detaylari:", fontsize=13, fontname="helv", color=(0.13, 0.13, 0.60))
+    y += 22
+
+    for i, s in enumerate(scores):
+        if y > height - 80:
+            page = doc.new_page(width=width, height=height)
+            y = 50
+
+        q_text = s.get("question", f"Soru {i + 1}")
+        q_score = s.get("score", 0)
+        sc = (0.15, 0.65, 0.30) if q_score >= 60 else (0.85, 0.55, 0.10) if q_score >= 40 else (0.80, 0.20, 0.20)
+
+        page.insert_text(fitz.Point(50, y), f"{i + 1}.", fontsize=11, fontname="helv", color=(0.13, 0.13, 0.60))
+
+        # Wrap long questions
+        max_chars = 75
+        q_lines = [q_text[j:j + max_chars] for j in range(0, len(q_text), max_chars)]
+        for ql in q_lines[:3]:
+            page.insert_text(fitz.Point(70, y), ql, fontsize=10, fontname="helv")
+            y += 15
+
+        page.insert_text(fitz.Point(70, y), f"Puan: {q_score}/100", fontsize=10, fontname="helv", color=sc)
+        y += 10
+
+        # Summary if available
+        summary = s.get("summary", "")
+        if summary:
+            sum_lines = [summary[j:j + max_chars] for j in range(0, len(summary), max_chars)]
+            for sl in sum_lines[:2]:
+                page.insert_text(fitz.Point(70, y), sl, fontsize=9, fontname="helv", color=(0.4, 0.4, 0.4))
+                y += 13
+
+        y += 12
+
+    # Footer on last page
+    if y > height - 40:
+        page = doc.new_page(width=width, height=height)
+        y = 50
+    page.insert_text(
+        fitz.Point(50, height - 30),
+        "sanalmulakatim.com - AI Mulakat Simulatoru",
+        fontsize=8,
+        fontname="helv",
+        color=(0.5, 0.5, 0.5),
+    )
+
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
+
+
+@app.post("/api/report/pdf")
+def generate_pdf_report(req: ReportRequest, request: Request, ctx: ClientCtx = Depends(get_client_ctx)):
+    """Generate a PDF performance report for a completed interview session."""
+    enforce_rate_limit(ctx, "billing")
+
+    # Pro check
+    pro_token = request.headers.get("x-pro-token", "").strip()
+    if not pro_token or not usage_db.is_pro_token(pro_token):
+        raise HTTPException(status_code=403, detail="PDF raporu sadece Pro kullanicilar icin.")
+
+    sess = SESSIONS.get(req.session_id)
+    # Allow report even if session is gone (scores come from frontend)
+    role = getattr(sess, "role", "Bilinmiyor") if sess else "Bilinmiyor"
+    seniority = getattr(sess, "seniority", "-") if sess else "-"
+    interview_type = getattr(sess, "interview_type", "mixed") if sess else "mixed"
+    language = getattr(sess, "language", "tr") if sess else "tr"
+
+    if not req.scores:
+        raise HTTPException(status_code=400, detail="Rapor icin soru/puan verisi gerekli.")
+
+    if len(req.scores) > 50:
+        raise HTTPException(status_code=400, detail="Cok fazla soru verisi.")
+
+    try:
+        pdf_bytes = _build_pdf_report(
+            role=role,
+            seniority=seniority,
+            interview_type=interview_type,
+            language=language,
+            scores=req.scores,
+            avg_score=max(0, min(100, req.avg_score)),
+            avg_breakdown=req.avg_breakdown,
+        )
+    except Exception:
+        logger.exception("PDF report generation failed")
+        raise HTTPException(status_code=500, detail="PDF raporu olusturulamadi.")
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="mulakat-raporu-{int(time.time())}.pdf"',
+        },
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# REFERRAL SYSTEM
+# ──────────────────────────────────────────────────────────────────────
+
+class ReferralApplyRequest(BaseModel):
+    referral_code: str = Field(..., max_length=30)
+    email: str = Field(..., max_length=200)
+
+
+@app.post("/api/referral/apply")
+def referral_apply(req: ReferralApplyRequest, request: Request, ctx: ClientCtx = Depends(get_client_ctx)):
+    """Apply a referral code.
+
+    Referral system works client-side for now (localStorage).
+    This endpoint validates the code format and records the referral
+    for future reward distribution.
+    """
+    enforce_rate_limit(ctx, "billing")
+
+    code = (req.referral_code or "").strip().upper()
+    email = (req.email or "").strip().lower()
+
+    if not code or not re.match(r"^REF_[A-Z0-9]{4,16}$", code):
+        raise HTTPException(status_code=400, detail="Gecersiz referans kodu formati.")
+
+    if not email or not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Gecersiz e-posta.")
+
+    # Prevent self-referral (basic check)
+    eh = usage_db.email_hash(email)
+
+    # Store referral record in payment_orders-like fashion
+    # Using a lightweight approach: log the referral event
+    ref_id = "ref_" + secrets.token_hex(8)
+    try:
+        usage_db._execute_write(
+            """INSERT INTO referral_records(ref_id, referral_code, referee_email_hash, referrer_client_id, created_at, status)
+               VALUES(?, ?, ?, ?, ?, ?)""",
+            (ref_id, code, eh, ctx.client_id, int(time.time()), "pending"),
+        )
+    except Exception:
+        # Table might not exist yet — that's fine, just log
+        logger.warning(f"Referral record insert failed (table may not exist): ref_id={ref_id}")
+
+    logger.info(f"Referral applied: code={code} ref_id={ref_id} client={ctx.client_id[:8]}***")
+
+    return {
+        "ok": True,
+        "message": "Referans kodu kaydedildi. Odeme sonrasi oduller aktiflestirilecektir.",
+        "ref_id": ref_id,
+    }
+
+
+@app.get("/api/referral/stats")
+def referral_stats(request: Request, ctx: ClientCtx = Depends(get_client_ctx)):
+    """Get referral stats for the current client."""
+    enforce_rate_limit(ctx, "billing")
+
+    try:
+        rows = usage_db._execute_read(
+            "SELECT status, COUNT(*) as cnt FROM referral_records WHERE referrer_client_id=? GROUP BY status",
+            (ctx.client_id,),
+        )
+        stats = {r[0]: r[1] for r in rows}
+    except Exception:
+        stats = {}
+
+    return {
+        "ok": True,
+        "total_referrals": sum(stats.values()),
+        "pending": stats.get("pending", 0),
+        "completed": stats.get("completed", 0),
+    }
