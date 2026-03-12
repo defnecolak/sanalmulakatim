@@ -318,11 +318,10 @@
   function renderUsage(u) {
     if (!usageBadge) return;
     const plan = (u.plan || "").toUpperCase();
-    if (upgradeBtn) {
-      upgradeBtn.classList.toggle("hidden", plan === "PRO");
-    }
+    // Always show upgrade btn (users can buy more credits)
     if (plan === "PRO") {
-      usageBadge.innerHTML = `<span class="muted">Paket:</span> <b>PRO</b> <span class="muted">•</span> Limitsiz`;
+      // Fetch credit balance
+      refreshCredits();
       return;
     }
     const r = u.remaining || {};
@@ -331,6 +330,21 @@
       `<span class="muted">Paket:</span> <b>ÜCRETSİZ</b>` +
       ` <span class="muted">•</span> Deneme <b>${fmtRemaining(r.eval)}</b>/<span class="muted">${fmtRemaining(lim.eval)}</span>` +
       ``;
+  }
+
+  async function refreshCredits() {
+    const proToken = getProToken();
+    if (!proToken) return;
+    try {
+      const r = await fetch("/api/credits", { headers: { "x-pro-token": proToken } });
+      const j = await r.json();
+      const credits = j.credits || 0;
+      usageBadge.innerHTML =
+        `<span class="muted">Kredi:</span> <b>${credits}</b>`;
+      if (upgradeBtn) {
+        upgradeBtn.textContent = "Kredi Al";
+      }
+    } catch (_) {}
   }
 
   async function refreshUsage() {
@@ -342,27 +356,88 @@
     }
   }
 
+  // Package selection modal
+  function showPackageModal() {
+    // Remove existing modal
+    const existing = document.getElementById("packageOverlay");
+    if (existing) existing.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "packageOverlay";
+    overlay.className = "overlay";
+    overlay.innerHTML = `
+      <div class="modal" style="width:min(680px,95%)">
+        <div class="modalHeader">
+          <h3 class="modalTitle">Kredi Paketi Seç</h3>
+          <button class="iconBtn" id="closePackageModal">✕</button>
+        </div>
+        <div style="font-size:13px; color:var(--muted); margin-bottom:14px;">1 kredi = 1 mülakat değerlendirmesi. Krediler süresiz geçerlidir.</div>
+        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px;">
+          <div class="pkgCard" data-pkg="starter" style="border:1.5px solid var(--border); border-radius:14px; padding:16px; cursor:pointer; transition:all 0.2s; text-align:center;">
+            <div style="font-weight:700; font-size:15px;">Başlangıç</div>
+            <div style="font-size:28px; font-weight:800; margin:8px 0; color:var(--primary);">99 ₺</div>
+            <div style="font-size:12px; color:var(--muted);">1 kredi</div>
+            <div style="font-size:11px; color:var(--muted); margin-top:4px;">99 ₺/kredi</div>
+          </div>
+          <div class="pkgCard" data-pkg="popular" style="border:1.5px solid rgba(79,70,229,0.3); border-radius:14px; padding:16px; cursor:pointer; transition:all 0.2s; text-align:center; background:linear-gradient(135deg,#fafbff,#eef2ff); position:relative;">
+            <div style="position:absolute; top:-10px; left:50%; transform:translateX(-50%); font-size:10px; font-weight:700; padding:2px 10px; border-radius:999px; background:linear-gradient(135deg,var(--primary),var(--accent)); color:#fff;">EN POPÜLER</div>
+            <div style="font-weight:700; font-size:15px; margin-top:4px;">Popüler</div>
+            <div style="font-size:28px; font-weight:800; margin:8px 0; color:var(--primary);">399 ₺</div>
+            <div style="font-size:12px; color:var(--muted);">5 kredi</div>
+            <div style="font-size:11px; color:var(--muted); margin-top:4px;">~80 ₺/kredi · <s>495 ₺</s></div>
+          </div>
+          <div class="pkgCard" data-pkg="pro" style="border:1.5px solid var(--border); border-radius:14px; padding:16px; cursor:pointer; transition:all 0.2s; text-align:center;">
+            <div style="font-weight:700; font-size:15px;">Profesyonel</div>
+            <div style="font-size:28px; font-weight:800; margin:8px 0; color:var(--primary);">999 ₺</div>
+            <div style="font-size:12px; color:var(--muted);">15 kredi</div>
+            <div style="font-size:11px; color:var(--muted); margin-top:4px;">~67 ₺/kredi · <s>1.485 ₺</s></div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Close button
+    document.getElementById("closePackageModal").addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+    // Package cards hover
+    overlay.querySelectorAll(".pkgCard").forEach(card => {
+      card.addEventListener("mouseenter", () => { card.style.transform = "translateY(-3px)"; card.style.boxShadow = "0 8px 24px rgba(79,70,229,0.15)"; });
+      card.addEventListener("mouseleave", () => { card.style.transform = ""; card.style.boxShadow = ""; });
+      card.addEventListener("click", () => {
+        const pkg = card.dataset.pkg;
+        overlay.remove();
+        startCheckout(pkg);
+      });
+    });
+  }
+
   async function startUpgrade() {
     if (!billingReady()) {
       showAlert("Ödemeler yakında aktif olacak. Şimdilik ücretsiz devam edebilirsin.");
       return;
     }
     clearAlert();
+    showPackageModal();
+  }
+
+  async function startCheckout(packageId) {
     if (!upgradeBtn) return;
     upgradeBtn.disabled = true;
     upgradeBtn.textContent = "Yönlendiriliyor…";
     try {
-      const resp = await apiPost("/api/billing/create_checkout", {});
+      const resp = await apiPost("/api/billing/create_checkout", { package: packageId });
       if (resp && resp.url) {
         window.location.href = resp.url;
         return;
       }
       throw new Error("Ödeme bağlantısı alınamadı.");
     } catch (e) {
-      showAlert(`Pro'ya geçiş başlatılamadı: ${e.message}`);
+      showAlert(`Ödeme başlatılamadı: ${e.message}`);
     } finally {
       upgradeBtn.disabled = false;
-      upgradeBtn.textContent = "Pro'ya Geç";
+      upgradeBtn.textContent = "Kredi Al";
     }
   }
 

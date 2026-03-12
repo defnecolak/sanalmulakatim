@@ -628,6 +628,8 @@ class SQLiteUsageDB:
                 cur.execute("ALTER TABLE pro_tokens ADD COLUMN provider TEXT;")
             if "provider_ref" not in cols:
                 cur.execute("ALTER TABLE pro_tokens ADD COLUMN provider_ref TEXT;")
+            if "credits" not in cols:
+                cur.execute("ALTER TABLE pro_tokens ADD COLUMN credits INTEGER DEFAULT 0;")
 
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_pro_tokens_client ON pro_tokens(client_id);"
@@ -672,6 +674,8 @@ class SQLiteUsageDB:
                 cur.execute("ALTER TABLE payment_orders ADD COLUMN last_error TEXT;")
             if "raw_response" not in pcols:
                 cur.execute("ALTER TABLE payment_orders ADD COLUMN raw_response TEXT;")
+            if "package_id" not in pcols:
+                cur.execute("ALTER TABLE payment_orders ADD COLUMN package_id TEXT DEFAULT 'starter';")
 
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_payment_orders_client ON payment_orders(client_id);"
@@ -852,14 +856,42 @@ class SQLiteUsageDB:
         provider: str | None = None,
         provider_ref: str | None = None,
         stripe_session_id: str | None = None,
+        credits: int = 0,
     ) -> None:
         now = int(time.time())
         with self._lock:
             cur = self._conn.cursor()
             cur.execute(
-                "INSERT OR REPLACE INTO pro_tokens(token, created_at, provider, provider_ref, stripe_session_id, client_id) VALUES(?,?,?,?,?,?)",
-                (token, now, provider, provider_ref, stripe_session_id, client_id),
+                "INSERT OR REPLACE INTO pro_tokens(token, created_at, provider, provider_ref, stripe_session_id, client_id, credits) VALUES(?,?,?,?,?,?,?)",
+                (token, now, provider, provider_ref, stripe_session_id, client_id, credits),
             )
+            self._conn.commit()
+
+    def get_credits(self, token: str) -> int:
+        token = (token or "").strip()
+        if not token:
+            return 0
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("SELECT credits FROM pro_tokens WHERE token=? LIMIT 1", (token,))
+            row = cur.fetchone()
+        return int(row[0] or 0) if row else 0
+
+    def use_credit(self, token: str) -> bool:
+        """Decrement 1 credit. Returns True if successful, False if no credits."""
+        token = (token or "").strip()
+        if not token:
+            return False
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("UPDATE pro_tokens SET credits = credits - 1 WHERE token=? AND credits > 0", (token,))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def add_credits(self, token: str, n: int) -> None:
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("UPDATE pro_tokens SET credits = credits + ? WHERE token=?", (n, token))
             self._conn.commit()
 
     def is_pro_token(self, token: str) -> bool:
@@ -1304,6 +1336,7 @@ class PostgresUsageDB:
                 # Backward compatible: add columns if missing
                 cur.execute("ALTER TABLE pro_tokens ADD COLUMN IF NOT EXISTS provider TEXT;")
                 cur.execute("ALTER TABLE pro_tokens ADD COLUMN IF NOT EXISTS provider_ref TEXT;")
+                cur.execute("ALTER TABLE pro_tokens ADD COLUMN IF NOT EXISTS credits INTEGER DEFAULT 0;")
 
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_pro_tokens_client ON pro_tokens(client_id);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_pro_tokens_ref ON pro_tokens(provider, provider_ref);")
@@ -1334,6 +1367,7 @@ class PostgresUsageDB:
                 cur.execute("ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS provider_payment_id TEXT;")
                 cur.execute("ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS last_error TEXT;")
                 cur.execute("ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS raw_response TEXT;")
+                cur.execute("ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS package_id TEXT DEFAULT 'starter';")
 
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_payment_orders_client ON payment_orders(client_id);")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_payment_orders_status ON payment_orders(status);")
@@ -1494,23 +1528,52 @@ class PostgresUsageDB:
         provider: str | None = None,
         provider_ref: str | None = None,
         stripe_session_id: str | None = None,
+        credits: int = 0,
     ) -> None:
         now = int(time.time())
         with self._lock:
             with self._conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO pro_tokens(token, created_at, provider, provider_ref, stripe_session_id, client_id)
-                    VALUES(%s,%s,%s,%s,%s,%s)
+                    INSERT INTO pro_tokens(token, created_at, provider, provider_ref, stripe_session_id, client_id, credits)
+                    VALUES(%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT(token) DO UPDATE SET
                       created_at=EXCLUDED.created_at,
                       provider=EXCLUDED.provider,
                       provider_ref=EXCLUDED.provider_ref,
                       stripe_session_id=EXCLUDED.stripe_session_id,
-                      client_id=EXCLUDED.client_id
+                      client_id=EXCLUDED.client_id,
+                      credits=EXCLUDED.credits
                     """,
-                    (token, now, provider, provider_ref, stripe_session_id, client_id),
+                    (token, now, provider, provider_ref, stripe_session_id, client_id, credits),
                 )
+            self._conn.commit()
+
+    def get_credits(self, token: str) -> int:
+        token = (token or "").strip()
+        if not token:
+            return 0
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute("SELECT credits FROM pro_tokens WHERE token=%s LIMIT 1", (token,))
+                row = cur.fetchone()
+        return int(row["credits"] or 0) if row else 0
+
+    def use_credit(self, token: str) -> bool:
+        """Decrement 1 credit. Returns True if successful, False if no credits."""
+        token = (token or "").strip()
+        if not token:
+            return False
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute("UPDATE pro_tokens SET credits = credits - 1 WHERE token=%s AND credits > 0", (token,))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def add_credits(self, token: str, n: int) -> None:
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute("UPDATE pro_tokens SET credits = credits + %s WHERE token=%s", (n, token))
             self._conn.commit()
 
     def is_pro_token(self, token: str) -> bool:
@@ -2316,6 +2379,13 @@ def inflight(kind: str, ctx: ClientCtx):
             except Exception:
                 pass
 
+
+# Credit packages for payment
+CREDIT_PACKAGES = {
+    "starter": {"credits": 1, "price": 99.0, "title": "Başlangıç (1 Kredi)"},
+    "popular": {"credits": 5, "price": 399.0, "title": "Popüler (5 Kredi)"},
+    "pro": {"credits": 15, "price": 999.0, "title": "Profesyonel (15 Kredi)"},
+}
 
 # -----------------------------
 # Session store (in-memory)
@@ -3858,7 +3928,7 @@ class EvaluateRequest(BaseModel):
     answer: str = Field(min_length=1, max_length=8000)
 
 @app.post("/api/evaluate")
-def evaluate(req: EvaluateRequest, ctx: ClientCtx = Depends(get_client_ctx)):
+def evaluate(req: EvaluateRequest, request: Request, ctx: ClientCtx = Depends(get_client_ctx)):
     enforce_rate_limit(ctx, "eval")
     enforce_daily_limit(ctx, "eval")
 
@@ -3875,6 +3945,17 @@ def evaluate(req: EvaluateRequest, ctx: ClientCtx = Depends(get_client_ctx)):
     if sess.current_index >= len(sess.questions):
         raise HTTPException(status_code=400, detail="Aktif soru yok.")
 
+    # Check credits for pro users
+    if ctx.is_pro:
+        pro_token = (request.headers.get("x-pro-token") or "").strip()
+        if pro_token and usage_db.is_pro_token(pro_token):
+            credits = usage_db.get_credits(pro_token)
+            if credits <= 0:
+                raise HTTPException(
+                    status_code=402,
+                    detail="Yeterli kredi yok. Lütfen daha fazla kredi satın al."
+                )
+
     q = sess.questions[sess.current_index]
     with inflight("eval", ctx):
         fb = _evaluate_answer(
@@ -3885,6 +3966,12 @@ def evaluate(req: EvaluateRequest, ctx: ClientCtx = Depends(get_client_ctx)):
         question=q,
         answer=req.answer.strip(),
     )
+
+    # Use credit after successful evaluation
+    if ctx.is_pro:
+        pro_token = (request.headers.get("x-pro-token") or "").strip()
+        if pro_token and usage_db.is_pro_token(pro_token):
+            usage_db.use_credit(pro_token)
 
     charge_usage(ctx, "eval")
 
@@ -4207,6 +4294,10 @@ def _iyzico_expect_success(j: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail="Ödeme sağlayıcısı işlemi reddetti. Lütfen tekrar dene.")
     return j
 
+@app.get("/api/billing/packages")
+def get_packages():
+    return {"ok": True, "packages": {k: {"credits": v["credits"], "price": v["price"], "title": v["title"]} for k, v in CREDIT_PACKAGES.items()}}
+
 @app.post("/api/billing/create_checkout")
 async def create_checkout(request: Request, ctx: ClientCtx = Depends(get_client_ctx)):
     """Create a hosted checkout URL.
@@ -4267,7 +4358,7 @@ async def create_checkout(request: Request, ctx: ClientCtx = Depends(get_client_
         base_url = _env_str("PUBLIC_BASE_URL", "http://localhost:5555").rstrip("/")
         _require_https_public_base_url(base_url)
 
-        # Optional body: { email }
+        # Optional body: { email, package }
         data = {}
         try:
             data = await request.json()
@@ -4278,14 +4369,22 @@ async def create_checkout(request: Request, ctx: ClientCtx = Depends(get_client_
         if isinstance(data, dict):
             email = str(data.get("email") or "").strip()
 
+        # Get package selection, default to "starter"
+        package_id = str(data.get("package") or "starter").strip().lower()
+        if package_id not in CREDIT_PACKAGES:
+            package_id = "starter"
+        package = CREDIT_PACKAGES[package_id]
+
         order_id = "ord_" + secrets.token_hex(12)
         usage_db.create_payment_order(order_id=order_id, provider="iyzico", client_id=ctx.client_id, email=email or None)
+        # Store package_id in the order for later retrieval
+        usage_db.update_payment_order(order_id, package_id=package_id)
 
-        amount_raw = float(_env_float("PRO_PRICE_TRY", 199.0))
+        amount_raw = float(package["price"])
         amount_raw = round(amount_raw, 2)
         # iyzico API requires price fields as decimal strings (e.g. "199.00"), NOT numbers.
         amount_str = f"{amount_raw:.2f}"
-        title = (_env_str("PRO_TITLE") or "Pro Erişim").strip() or "Pro Erişim"
+        title = package.get("title", "Pro Erişim").strip() or "Pro Erişim"
 
         callback_url = f"{base_url}/api/billing/iyzico/callback?order_id={order_id}"
 
@@ -4562,8 +4661,14 @@ async def iyzico_callback(request: Request, order_id: str):
         order = usage_db.get_payment_order(order_id)
         client_id = order.get("client_id") if isinstance(order, dict) else None
 
+        # Get package_id from order and look up credits
+        package_id = (order.get("package_id") if isinstance(order, dict) else None) or "starter"
+        if package_id not in CREDIT_PACKAGES:
+            package_id = "starter"
+        credits = CREDIT_PACKAGES[package_id].get("credits", 1)
+
         pro_token = "pro_" + secrets.token_hex(16)
-        usage_db.add_pro_token(token=pro_token, client_id=client_id, provider="iyzico", provider_ref=order_id)
+        usage_db.add_pro_token(token=pro_token, client_id=client_id, provider="iyzico", provider_ref=order_id, credits=credits)
 
         usage_db.update_payment_order(
             order_id,
@@ -4649,6 +4754,13 @@ def redeem(
     if not token:
         raise HTTPException(status_code=404, detail="Bu session_id için token bulunamadı. Stripe webhook ayarlarını kontrol et.")
     return {"token": token}
+
+@app.get("/api/credits")
+def get_credits_endpoint(request: Request, ctx: ClientCtx = Depends(get_client_ctx)):
+    pro_token = request.headers.get("x-pro-token", "").strip()
+    if not pro_token or not usage_db.is_pro_token(pro_token):
+        return {"ok": True, "credits": 0}
+    return {"ok": True, "credits": usage_db.get_credits(pro_token)}
 
 
 
