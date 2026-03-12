@@ -10,9 +10,10 @@
     return `${v.toLocaleString("tr-TR", { maximumFractionDigits: 2 })} ₺`;
   }
 
-  function _setTextAttr(attr, value, fallback = "—") {
+  function _setTextAttr(attr, value, fallback) {
+    if (!value) return; // keep existing HTML content if API returns empty
     document.querySelectorAll(`[${attr}]`).forEach((el) => {
-      el.textContent = (value || fallback || "—").toString();
+      el.textContent = value.toString();
     });
   }
 
