@@ -820,9 +820,24 @@ audio{
   transition: all var(--transition);
 }
 .paymentBadge:hover{ transform: translateY(-1px); }
-.paymentBadge.iyzico{ background: linear-gradient(135deg, #ecfeff, #e0f2fe); border-color: rgba(6,182,212,0.2); color: #0e7490; }
-.paymentBadge.visa{ background: linear-gradient(135deg, #eff6ff, #dbeafe); border-color: rgba(59,130,246,0.2); color: #1d4ed8; }
-.paymentBadge.mastercard{ background: linear-gradient(135deg, #fff7ed, #ffedd5); border-color: rgba(249,115,22,0.2); color: #c2410c; }
+.paymentBadge.iyzico{
+  background: #fff;
+  border-color: #e2e8f0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 14px;
+}
+.paymentBadge.visa{
+  background: #fff;
+  border-color: #e2e8f0;
+  padding: 6px 14px;
+}
+.paymentBadge.mastercard{
+  background: #fff;
+  border-color: #e2e8f0;
+  padding: 4px 12px;
+}
 
 /* ── Info Cards ── */
 .infoGrid{ align-items: stretch; }
