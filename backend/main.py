@@ -48,7 +48,11 @@ from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, 
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 try:
-    from openai import OpenAI  # type: ignore
+    from anthropic import Anthropic  # type: ignore
+except Exception:  # pragma: no cover
+    Anthropic = None  # type: ignore
+try:
+    from openai import OpenAI  # type: ignore  (only used for Whisper transcription)
 except Exception:  # pragma: no cover
     OpenAI = None  # type: ignore
 
@@ -446,12 +450,23 @@ def require_captcha_or_raise(request: Request, captcha_token: Optional[str], *, 
         raise HTTPException(status_code=403, detail="captcha_gecersiz")
 
 
-def _get_client() -> OpenAI:
+def _get_client() -> Anthropic:
+    """Return Anthropic client for question generation & evaluation."""
+    if Anthropic is None:
+        raise HTTPException(status_code=500, detail="anthropic paketi bulunamadı. backend klasöründe: pip install -r requirements.txt")
+    api_key = _env_str("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY eksik. backend/.env dosyana API key ekle.")
+    timeout = _env_float("ANTHROPIC_TIMEOUT", 90.0)
+    return Anthropic(api_key=api_key, timeout=timeout)
+
+def _get_openai_client() -> "OpenAI":
+    """Return OpenAI client ONLY for Whisper transcription."""
     if OpenAI is None:
-        raise HTTPException(status_code=500, detail="openai paketi bulunamadı. backend klasöründe: pip install -r requirements.txt")
+        raise HTTPException(status_code=500, detail="openai paketi bulunamadı (Whisper transcription için gerekli).")
     api_key = _env_str("OPENAI_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=400, detail="OPENAI_API_KEY eksik. backend/.env dosyana API key ekle.")
+        raise HTTPException(status_code=400, detail="OPENAI_API_KEY eksik (Whisper transcription için gerekli).")
     timeout = _env_float("OPENAI_TIMEOUT", 90.0)
     try:
         return OpenAI(api_key=api_key, timeout=timeout)
@@ -459,72 +474,55 @@ def _get_client() -> OpenAI:
         return OpenAI(api_key=api_key)
 
 def _chat_json(
-    client: OpenAI,
+    client: Anthropic,
     *,
     model: str,
-    messages: List[Dict[str, Any]],
+    system: str,
+    user_msg: str,
     max_tokens: int,
 ) -> Dict[str, Any]:
     """
-    Returns a JSON object. Uses response_format json_object when available.
-    Falls back to plain text + parsing.
+    Call Anthropic Messages API and return parsed JSON.
     """
-    try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            response_format={"type": "json_object"},
-            max_tokens=max_tokens,
-        )
-        content = resp.choices[0].message.content or "{}"
-        return _safe_json_loads(content)
-    except Exception:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-        )
-        content = resp.choices[0].message.content or "{}"
-        return _safe_json_loads(content)
+    resp = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=system,
+        messages=[{"role": "user", "content": user_msg}],
+    )
+    content = resp.content[0].text if resp.content else "{}"
+    return _safe_json_loads(content)
 
-def _ocr_images_with_openai(client: OpenAI, images_png: List[bytes], language: str) -> str:
+def _ocr_images_with_claude(client: Anthropic, images_png: List[bytes], language: str) -> str:
     """
-    OCR via OpenAI multimodal model (Responses API).
+    OCR via Claude vision (Anthropic Messages API).
     Returns plain text.
     """
-    model = (_env_str("OPENAI_OCR_MODEL") or _env_str("OPENAI_MODEL") or "gpt-4o-mini").strip()
-    parts: List[Dict[str, Any]] = [
-        {
-            "type": "input_text",
-            "text": (
-                "Bu bir CV görüntüsü. Tüm metni eksiksiz çıkar ve düz metin (plain text) olarak döndür. "
-                "Başlık/alt başlıkları koru, satırları makul şekilde böl."
-            )
-            if _is_tr(language)
-            else "This is a resume image. Extract ALL text faithfully and return as plain text. Preserve headings reasonably."
-        }
-    ]
+    model = (_env_str("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250514").strip()
+    prompt = (
+        "Bu bir CV görüntüsü. Tüm metni eksiksiz çıkar ve düz metin (plain text) olarak döndür. "
+        "Başlık/alt başlıkları koru, satırları makul şekilde böl."
+    ) if _is_tr(language) else (
+        "This is a resume image. Extract ALL text faithfully and return as plain text. Preserve headings reasonably."
+    )
+
+    content_blocks: List[Dict[str, Any]] = []
     for b in images_png:
         b64 = base64.b64encode(b).decode("utf-8")
-        parts.append({"type": "input_image", "image_url": f"data:image/png;base64,{b64}"})
+        content_blocks.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/png", "data": b64},
+        })
+    content_blocks.append({"type": "text", "text": prompt})
 
     try:
-        r = client.responses.create(
+        r = client.messages.create(
             model=model,
-            input=[{"role": "user", "content": parts}],
-            max_output_tokens=2000,
+            max_tokens=2000,
+            messages=[{"role": "user", "content": content_blocks}],
         )
-        text = getattr(r, "output_text", None)
-        if isinstance(text, str) and text.strip():
-            return text.strip()
-        out = getattr(r, "output", []) or []
-        acc = []
-        for item in out:
-            for c in getattr(item, "content", []) or []:
-                t = getattr(c, "text", None)
-                if isinstance(t, str):
-                    acc.append(t)
-        return "\n".join(acc).strip()
+        text = r.content[0].text if r.content else ""
+        return text.strip()
     except Exception as e:
         logger.exception("OCR failed")
         raise HTTPException(status_code=500, detail="OCR işlemi başarısız oldu. Lütfen tekrar dene.")
@@ -2278,7 +2276,7 @@ def charge_usage(ctx: ClientCtx, kind: str) -> None:
 # In-flight concurrency limits (defence-in-depth)
 # -----------------------------
 # Amaç: Aynı IP/istemciden (ve global olarak) çok fazla paralel "maliyetli" işlem başlatılmasını engellemek.
-# Bu, bot saldırılarında hem CPU'yu hem de OpenAI maliyetlerini korur.
+# Bu, bot saldırılarında hem CPU'yu hem de Anthropic/OpenAI maliyetlerini korur.
 _INFLIGHT_LOCK = threading.Lock()
 # (kind, client_id) -> (semaphore, last_seen_ts)
 _INFLIGHT_PER_CLIENT: Dict[Tuple[str, str], Tuple[threading.BoundedSemaphore, float]] = {}
@@ -2719,7 +2717,7 @@ def _validate_question_obj(role: str, language: str, q: Dict[str, Any], asked_so
     return True, "OK"
 
 def _generate_question(
-    client: OpenAI,
+    client: Anthropic,
     *,
     role: str,
     seniority: str,
@@ -2729,8 +2727,8 @@ def _generate_question(
     focus: Optional[str],
     interview_type: str = "mixed",
 ) -> Dict[str, Any]:
-    model = (_env_str("OPENAI_MODEL") or "gpt-4o-mini").strip()
-    max_tokens = _env_int("OPENAI_JSON_MAX_TOKENS", 1800)
+    model = (_env_str("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250514").strip()
+    max_tokens = _env_int("ANTHROPIC_JSON_MAX_TOKENS", 1800)
 
     role_lock = _role_lock_instruction(role)
     prof = _role_profile(role)
@@ -2749,44 +2747,54 @@ def _generate_question(
         cv_hint = cv_text[:1800] + ("..." if len(cv_text) > 1800 else "")
 
     sys = (
-        "Sen bir mülakat koçusun. Her zaman SADECE geçerli JSON döndürürsün. "
-        "Asla Markdown kullanma, asla açıklama metni ekleme."
+        "Sen Türkiye'nin en deneyimli mülakat koçusun. 15+ yıl Fortune 500 şirketlerinde İK direktörlüğü yaptın. "
+        "Gerçek mülakatlardan yüzlerce soru hazırladın. Şimdi bir adayı gerçekçi mülakata hazırlıyorsun.\n\n"
+        "MUTLAK KURAL: Yanıtın SADECE geçerli JSON olmalı. Açıklama metni, Markdown, kod bloku (```) asla kullanma. "
+        "İlk karakter {{ son karakter }} olmalı."
     )
 
-    base_user = f"""
-Hedef Rol: {role}
-Kıdem: {seniority} ({exp_range})
-Dil: {language}
+    base_user = f"""<context>
+<role>{role}</role>
+<seniority>{seniority} ({exp_range})</seniority>
+<language>{language}</language>
+<question_type>{desired_type}</question_type>
+</context>
 
-KURALLAR (ÇOK ÖNEMLİ):
-- {role_lock}
-- {seniority_text}
-- Bu sorunun türü: {desired_type}
-- Soru GERÇEKÇİ olmalı ve işin günlük pratiğine uygun olmalı.
-- Tek ana soru yaz (1–2 cümle). Gereksiz uzun paragraf yazma.
-- 3 adet takip sorusu yaz; her biri farklı bir şeyi ölçsün (akıl yürütme, iletişim, etki/sonuç gibi).
-- Daha önce sorulan sorularla çok benzer soru sorma.
+<constraints>
+1. {role_lock}
+2. {seniority_text}
+3. Soru türü: {desired_type}
+4. Soru GERÇEK bir mülakatta sorulabilecek kadar doğal ve spesifik olmalı. Genel/klişe sorulardan kaçın.
+   - KÖTÜ: "Zor bir durumu nasıl yönettin?" (çok genel)
+   - İYİ: "Bir projede deadline risk altındayken ekipteki bir kişi işbirliği yapmayı reddetti. Ne yaptın?" (spesifik senaryo)
+5. Ana soru 1-2 cümle olsun. Gerçek bir mülakatçının karşısındaki adaya söyleyeceği gibi doğal dil kullan.
+6. 3 takip sorusu yaz. Her biri farklı bir boyutu ölçsün:
+   - Takip 1: Düşünce süreci / akıl yürütme ("Neden bu yaklaşımı tercih ettin?")
+   - Takip 2: Somut eylem / detay ("Adım adım ne yaptın?")
+   - Takip 3: Sonuç / etki / öğrenme ("Sonuç ne oldu? Ne öğrendin?")
+7. Daha önce sorulan sorularla tematik örtüşme olmasın. Farklı yetkinlik ve senaryoları keşfet.
+8. Adayı düşünmeye zorlayacak, hazır kalıp cevapla geçiştirilemeyecek sorular sor.
+</constraints>
 
-İPUÇLARI (role referansı):
-- Yetkinlikler: {", ".join(prof.get("competencies") or [])}
-- Vaka temaları (örnek): {", ".join(prof.get("case_themes") or [])}
+<role_competencies>{", ".join(prof.get("competencies") or [])}</role_competencies>
+<case_themes>{", ".join(prof.get("case_themes") or [])}</case_themes>
 
-Daha önce sorulanlar:
+<already_asked>
 {asked}
+</already_asked>
 
-{focus_text}
+{f'<focus_area>{focus_text}</focus_area>' if focus_text else ''}
 
-CV (opsiyonel; SADECE transfer edilebilir beceri referansı):
-{cv_hint}
+{f'<cv_summary>{cv_hint}</cv_summary>' if cv_hint else ''}
 
-İstenen JSON şeması:
+Yanıtını şu JSON şemasında döndür:
 {{
   "type": "davranışsal" | "teknik" | "vaka",
   "question": "tek ana soru",
   "followups": ["takip 1", "takip 2", "takip 3"]
 }}
 
-Not: Dil Türkçe ise type değerlerini Türkçe kullan (davranışsal/teknik/vaka)."""
+Dil Türkçe ise type değerlerini Türkçe kullan (davranışsal/teknik/vaka)."""
 
     last_reason = ""
     q_obj: Dict[str, Any] = {}
@@ -2797,7 +2805,8 @@ Not: Dil Türkçe ise type değerlerini Türkçe kullan (davranışsal/teknik/va
         data = _chat_json(
             client,
             model=model,
-            messages=[{"role": "system", "content": sys}, {"role": "user", "content": _clean_text(user)}],
+            system=sys,
+            user_msg=_clean_text(user),
             max_tokens=max_tokens,
         )
 
@@ -2865,7 +2874,7 @@ def _level_from_score(score: int, language: str) -> str:
         return "Strong"
 
 def _evaluate_answer(
-    client: OpenAI,
+    client: Anthropic,
     *,
     role: str,
     seniority: str,
@@ -2873,51 +2882,73 @@ def _evaluate_answer(
     question: Dict[str, Any],
     answer: str,
 ) -> Dict[str, Any]:
-    model = (_env_str("OPENAI_MODEL") or "gpt-4o-mini").strip()
-    max_tokens = _env_int("OPENAI_JSON_MAX_TOKENS", 2500)
+    model = (_env_str("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250514").strip()
+    max_tokens = _env_int("ANTHROPIC_JSON_MAX_TOKENS", 2500)
 
     sys = (
-        "Sen bir mülakat koçusun. Her zaman SADECE geçerli JSON döndürürsün. "
-        "Asla Markdown kullanma, asla açıklama metni ekleme."
+        "Sen Türkiye'nin en deneyimli mülakat koçusun. 15+ yıl Fortune 500 ve unicorn şirketlerde İK direktörlüğü yaptın. "
+        "Binlerce adayı değerlendirdin. Şimdi bir adaya yapıcı, somut ve uygulanabilir geri bildirim veriyorsun.\n\n"
+        "MUTLAK KURAL: Yanıtın SADECE geçerli JSON olmalı. Açıklama metni, Markdown, kod bloku (```) asla kullanma. "
+        "İlk karakter {{ son karakter }} olmalı."
     )
 
-    star_line = "STAR (Durum, Görev, Eylem, Sonuç)"
     exp_range = _experience_range_from_seniority(seniority, language)
-    user = f"""
-Hedef Rol: {role}
-Kıdem: {seniority} ({exp_range})
-Dil: {language}
+    user = f"""<context>
+<role>{role}</role>
+<seniority>{seniority} ({exp_range})</seniority>
+<language>{language}</language>
+</context>
 
-Soru Tipi: {question.get("type")}
-Soru: {question.get("question")}
-Takip: {question.get("followups")}
+<interview_question>
+<type>{question.get("type")}</type>
+<main_question>{question.get("question")}</main_question>
+<followups>{question.get("followups")}</followups>
+</interview_question>
 
-Aday Cevabı:
+<candidate_answer>
 {answer}
+</candidate_answer>
 
-GÖREV:
-Aday cevabını değerlendir ve iyileştirmesi için detaylı ama okunabilir bir geri bildirim üret.
-- {star_line} yapısını referans al.
-- Cevap boş/çok kısa (≈30 kelimeden az) ya da taslak işaretleri ("...", boş madde, sadece şablon) içeriyorsa puan çok düşük olmalı.
-  - Sadece iskelet/şablon varsa: overall_score = 0 ver.
-  - Çok kısa ve somutluk yoksa: overall_score 0-15 aralığında kal.
-- Tıbbi/klinik içerik varsa: eğitim amaçlı değerlendir; gerçek klinik karar yerine geçmez.
-- top_fixes alanında mümkünse STAR'a hizalan:
-  - P1: Durum + Görev (bağlam ve rolün netliği)
-  - P2: Eylem (adımlar ve yaklaşım)
-  - P3: Sonuç + Etki/Metrik (ölçülebilir sonuç)
-- top_fixes[*].example alanı "kopyalanıp söylenebilir" olmalı:
-  - 1. tekil şahısla yaz (örn. "Acil serviste ... yaptım"); üçüncü şahıs ("Bir hastanın...") kullanma.
-  - "bahsederek/belirtmelisiniz" gibi yönerge dili kullanma; doğrudan örnek cümle yaz.
-  - Soru bağlamına uygun en az 1 somut detay (nerede/kim/ne zaman) içersin.
+<evaluation_instructions>
+Adayın cevabını titizlikle değerlendir. Değerlendirme referans çerçeven STAR yöntemi (Durum, Görev, Eylem, Sonuç):
 
-DİL KURALI:
-- Çıktıdaki TÜM alanlar Türkçe olmalı. İngilizce parantezli karşılıklar (Situation/Action/Result vb.) yazma.
+PUANLAMA KRİTERLERİ (katı uygula):
+- Cevap boş, çok kısa (<30 kelime), veya şablon/iskelet içeriyorsa ("...", boş madde): overall_score = 0-15
+- Genel/klişe cevap, somut detay yok: overall_score = 15-35
+- Orta düzey: bazı detaylar var ama STAR'ın bir-iki bacağı eksik: overall_score = 35-60
+- İyi: STAR çoğunlukla tamam, somut detaylar var: overall_score = 60-80
+- Mükemmel: STAR tam, metrikler/sayılar var, etki net: overall_score = 80-100
 
-İstenen JSON şeması:
+Gerçek mülakatlarda 70+ puan almak zordur. Enflasyonlu puan verme — aday gerçekten hak etmedikçe 70'in üstüne çıkma.
+
+SUMMARY YAZIM KURALI:
+- Tam 2-3 cümle yaz, paragraf halinde (liste/numara KULLANMA)
+- 1. cümle: Cevabın en güçlü yanı neydi
+- 2-3. cümle: En kritik eksik ne ve bunu düzeltmek için ne yapmalı
+- Motivasyonel ama dürüst ol. Yalandan "harika" deme, ama umut kır diye de acımasız olma.
+
+TOP_FIXES KURALLARI:
+- STAR'a hizala: P1=Durum+Görev, P2=Eylem, P3=Sonuç+Etki
+- "example" alanı DOĞRUDAN SÖYLENEBİLİR cümle olmalı:
+  ✓ "Ekibimizde 3 kişi görevden ayrılınca, kalan 4 kişiyle sprint planını yeniden çizdim ve 2 hafta içinde teslimatı tamamladık."
+  ✗ "Bir durumu anlatarak başlamalısınız..." (yönerge dili YASAK)
+  ✗ "Aday şunu söyleyebilir..." (üçüncü şahıs YASAK)
+- Her example soru bağlamına özgü en az 1 somut detay içersin (nerede/kim/ne zaman/kaç kişi)
+
+ÖRNEK CEVAPLAR:
+- short_30s: Mülakatçıya 30 saniyede söylenebilecek özlü ama etkili bir cevap
+- long_90s: 90 saniyelik detaylı, STAR yapısına tam uygun güçlü bir cevap
+- Her ikisi de 1. tekil şahıs ve doğal konuşma diliyle olmalı
+
+{f'Tıbbi/klinik içerik varsa: eğitim amaçlı değerlendir, gerçek klinik karar yerine geçmez.' if 'tıp' in role.lower() or 'doktor' in role.lower() or 'hemşire' in role.lower() else ''}
+
+DİL KURALI: Çıktıdaki TÜM alanlar Türkçe olmalı. İngilizce parantezli karşılıklar (Situation/Action vb.) YAZMA.
+</evaluation_instructions>
+
+Yanıtını şu JSON şemasında döndür:
 {{
   "overall_score": 0-100,
-  "level": "Zayıf/Orta/Güçlü",
+  "level": "Zayıf" | "Orta" | "Güçlü",
   "one_sentence_goal": "Bir sonraki deneme için tek cümle hedef",
   "score_breakdown": {{
     "yapi_star": 0-20,
@@ -2926,31 +2957,32 @@ DİL KURALI:
     "netlik": 0-20,
     "ozguven": 0-20
   }},
-  "summary": "2-3 cümlelik tek paragraf özet (liste yok, 1-5 numara yok). 1 cümle: ne iyi; 1-2 cümle: en büyük eksik ve nasıl düzeltilir.",
+  "summary": "2-3 cümlelik tek paragraf özet",
   "top_fixes": [
     {{
       "id": "P1",
       "title": "kısa başlık",
-      "why": "neden önemli",
-      "how": "nasıl düzeltilir",
-      "example": "1-3 cümlelik örnek"
+      "why": "neden önemli (1 cümle)",
+      "how": "nasıl düzeltilir (1-2 cümle)",
+      "example": "doğrudan söylenebilir 1-3 cümlelik örnek"
     }},
     {{ "id": "P2", "title": "...", "why": "...", "how": "...", "example": "..." }},
     {{ "id": "P3", "title": "...", "why": "...", "how": "...", "example": "..." }}
   ],
-  "followup_question": "Tek takip sorusu",
+  "followup_question": "Bu cevaba özel tek takip sorusu",
   "example_answers": {{
-    "short_30s": "30 saniyelik örnek cevap",
-    "long_90s": "90 saniyelik örnek cevap"
+    "short_30s": "30 saniyelik örnek cevap (1. tekil şahıs)",
+    "long_90s": "90 saniyelik detaylı örnek cevap (1. tekil şahıs, STAR yapısında)"
   }},
   "red_flags": ["varsa 1-3 madde, yoksa boş liste"],
-  "focus_area": "bir sonraki soru odağı (yapi_star/uygunluk/etki_metrik/netlik/ozguven)"
+  "focus_area": "yapi_star | uygunluk | etki_metrik | netlik | ozguven"
 }}
 """
     data = _chat_json(
         client,
         model=model,
-        messages=[{"role": "system", "content": sys}, {"role": "user", "content": _clean_text(user)}],
+        system=sys,
+        user_msg=_clean_text(user),
         max_tokens=max_tokens,
     )
 
@@ -3580,14 +3612,16 @@ def health(request: Request):
         if not sent or not hmac.compare_digest(sent, ADMIN_STATUS_KEY):
             raise HTTPException(status_code=403, detail="Yetkisiz erişim.")
 
-    key_ok = bool(_env_str("OPENAI_API_KEY"))
+    key_ok = bool(_env_str("ANTHROPIC_API_KEY"))
+    whisper_ok = bool(_env_str("OPENAI_API_KEY"))
     stripe_ok = _stripe_enabled()
     iyzico_ok = _iyzico_enabled()
     provider = _payment_provider()
     return {
         "ok": True,
-        "openai_key": key_ok,
-        "model": (_env_str("OPENAI_MODEL") or "gpt-4o-mini"),
+        "anthropic_key": key_ok,
+        "whisper_key": whisper_ok,
+        "model": (_env_str("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250514"),
         "payment_provider": provider,
         "stripe_configured": stripe_ok,
         "iyzico_configured": iyzico_ok,
@@ -4033,7 +4067,7 @@ async def transcribe(request: Request, file: UploadFile = File(...), language: s
     enforce_rate_limit(ctx, "transcribe")
     enforce_daily_limit(ctx, "transcribe")
 
-    client = _get_client()
+    client = _get_openai_client()  # Whisper transcription uses OpenAI
     audio_bytes = await file.read()
 
     # Hard cap to avoid huge uploads / abuse
@@ -4154,7 +4188,7 @@ async def parse_pdf(file: UploadFile = File(...), language: str = "tr", ctx: Cli
         if not images:
             raise HTTPException(status_code=400, detail="PDF sayfa bulunamadı.")
         with inflight("ocr", ctx):
-            ocr_text = await asyncio.to_thread(_ocr_images_with_openai, client, images, language=language)
+            ocr_text = await asyncio.to_thread(_ocr_images_with_claude, client, images, language=language)
         ocr_text = _clean_text(ocr_text)
         if not ocr_text:
             raise HTTPException(status_code=400, detail="OCR metin çıkaramadı. PDF çok düşük kalite olabilir.")
