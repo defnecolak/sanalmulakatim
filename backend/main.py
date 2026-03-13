@@ -498,7 +498,7 @@ def _ocr_images_with_claude(client: Anthropic, images_png: List[bytes], language
     OCR via Claude vision (Anthropic Messages API).
     Returns plain text.
     """
-    model = (_env_str("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250514").strip()
+    model = (_env_str("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250929").strip()
     prompt = (
         "Bu bir CV görüntüsü. Tüm metni eksiksiz çıkar ve düz metin (plain text) olarak döndür. "
         "Başlık/alt başlıkları koru, satırları makul şekilde böl."
@@ -2727,7 +2727,7 @@ def _generate_question(
     focus: Optional[str],
     interview_type: str = "mixed",
 ) -> Dict[str, Any]:
-    model = (_env_str("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250514").strip()
+    model = (_env_str("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250929").strip()
     max_tokens = _env_int("ANTHROPIC_JSON_MAX_TOKENS", 1800)
 
     role_lock = _role_lock_instruction(role)
@@ -2882,7 +2882,7 @@ def _evaluate_answer(
     question: Dict[str, Any],
     answer: str,
 ) -> Dict[str, Any]:
-    model = (_env_str("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250514").strip()
+    model = (_env_str("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250929").strip()
     max_tokens = _env_int("ANTHROPIC_JSON_MAX_TOKENS", 2500)
 
     sys = (
@@ -3621,7 +3621,7 @@ def health(request: Request):
         "ok": True,
         "anthropic_key": key_ok,
         "whisper_key": whisper_ok,
-        "model": (_env_str("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250514"),
+        "model": (_env_str("ANTHROPIC_MODEL") or "claude-sonnet-4-5-20250929"),
         "payment_provider": provider,
         "stripe_configured": stripe_ok,
         "iyzico_configured": iyzico_ok,
