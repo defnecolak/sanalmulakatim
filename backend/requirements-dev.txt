@@ -8,5 +8,5 @@ httpx>=0.26.0
 # Optional security / quality tooling
 ruff>=0.6.0
 bandit>=1.7.9
-pip-audit>=2.7.3
+pip-audit>=2.10.0
 pyotp>=2.9.0
