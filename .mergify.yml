@@ -1,0 +1,14 @@
+queue_rules:
+  - name: default
+    batch_size: 3
+    batch_max_wait_time: 30 s
+    merge_conditions:
+      - check-success=ci
+pull_request_rules:
+  - name: queue on label
+    conditions:
+      - label=queue-me
+      - base=qtest-base
+    actions:
+      queue:
+        name: default
