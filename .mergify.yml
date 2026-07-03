@@ -1,8 +1,0 @@
-pull_request_rules:
-  - name: bb-test merge on label (branch-protection bypass probe)
-    conditions:
-      - label=mergify-bypass-test
-      - base=mergify-test-target
-    actions:
-      merge:
-        method: merge
