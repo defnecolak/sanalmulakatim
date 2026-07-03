@@ -1,0 +1,11 @@
+queue_rules:
+  - name: default
+    merge_conditions:
+      - check-success=ci
+pull_request_rules:
+  - name: queueable via checkbox
+    conditions:
+      - base=cbtest-base
+    actions:
+      queue:
+        name: default
