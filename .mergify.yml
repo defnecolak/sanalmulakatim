@@ -3,9 +3,10 @@ queue_rules:
     merge_conditions:
       - check-success=ci
 pull_request_rules:
-  - name: queueable via checkbox
+  - name: queueable
     conditions:
       - base=cbtest-base
+      - label=autoq
     actions:
       queue:
         name: default
