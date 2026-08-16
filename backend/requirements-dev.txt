@@ -1,7 +1,7 @@
 # Dev ortamı: hem uygulama bağımlılıkları hem test/lint araçları.
 -r requirements.txt
 
-pytest>=8.0.0
+pytest>=9.0.3
 pytest-asyncio>=0.23.0
 httpx>=0.26.0
 
